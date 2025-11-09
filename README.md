@@ -1,4 +1,4 @@
-Asistente de Conexión VPN (openVPN) para Linux. 
+Asistente de Conexión VPN (openVPN) para Linux. Probado para PrivateVPN.
 
 Un conjunto de scripts avanzados para gestionar conexiones OpenVPN en Linux de forma segura, evitando las "fugas" de datos de NetworkManager (amordazándolo sin prescindir de él).
 ¿Qué es esto?
