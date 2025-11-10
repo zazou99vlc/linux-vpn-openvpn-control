@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # ==============================================================================
-#            LANZADOR INTELIGENTE Y CONFIGURADOR PARA AMULE
+# 	 	 LANZADOR INTELIGENTE Y CONFIGURADOR PARA AMULE
 # ==============================================================================
 
 # --- MODO LANZADOR ---
 if [ "$1" != "--run-worker" ]; then
     SCRIPT_PATH=$(readlink -f "$0")
     if [[ "$XDG_CURRENT_DESKTOP" == *"GNOME"* ]]; then
+        # La pausa (read -p) se mantiene aquí, pero ahora el trabajador esperará 3s.
         gnome-terminal -- bash -c "'$SCRIPT_PATH' --run-worker; echo; read -p '>>> Proceso finalizado. Presiona Enter para cerrar esta ventana.'"
         exit 0
     elif [[ "$XDG_CURRENT_DESKTOP" == *"XFCE"* ]]; then
@@ -32,8 +33,8 @@ PORT_FILE="$SCRIPT_DIR/forwarded_port.txt"
 
 # ... (Verificaciones de archivos y puerto, sin cambios) ...
 if [ ! -f "$PORT_FILE" ]; then
-  echo "Error: No se encuentra el archivo del puerto ('$PORT_FILE')."
-  exit 1
+    echo "Error: No se encuentra el archivo del puerto ('$PORT_FILE')."
+    exit 1
 fi
 NUEVO_PUERTO=$(cat "$PORT_FILE")
 if ! [[ "$NUEVO_PUERTO" =~ ^[0-9]+$ ]]; then
@@ -65,9 +66,16 @@ echo "--> Actualizando puerto UDP..."
 sed -i "s/^UDPPort=.*/UDPPort=$NUEVO_PUERTO/" "$AMULE_CONFIG_FILE"
 echo "--> ¡Configuración actualizada!"
 
-# Iniciar la GUI de aMule en segundo plano.
+# Iniciar la GUI de aMule desvinculada de la terminal (usando nohup).
 echo "--> Iniciando la interfaz gráfica de aMule (GUI)..."
-amule >/dev/null 2>&1 &
+nohup amule >/dev/null 2>&1 &
 
 echo ">>> ¡aMule GUI iniciado con el nuevo puerto!"
+
+# ----------------------------------------------------------------------
+# AÑADIDO: Espera unos segundos para asegurar que el usuario pueda leer 
+# los mensajes finales antes de que el lanzador tome el control y pause.
+sleep 3
+# ----------------------------------------------------------------------
+
 exit 0
