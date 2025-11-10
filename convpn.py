@@ -40,13 +40,12 @@ PING_TIMEOUT = 4
 API_TIMEOUT = 5
 
 # --- VARIABLES GLOBALES ---
-ORIGINAL_DEFAULT_ROUTE = None 
+ORIGINAL_DEFAULT_ROUTE = None
 ORIGINAL_DEFAULT_DEV = None
 ORIGINAL_DEFAULT_GW = None
 ACTIVE_CONNECTION_NAME = None
 
 # --- FUNCIONES DE UTILIDAD ---
-# ... (Todas las funciones de utilidad hasta monitor_connection no cambian) ...
 def safe_print(message, dynamic=False):
     subprocess.run(["stty", "sane"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if dynamic:
@@ -199,7 +198,6 @@ def check_and_set_default_route():
     return True
 
 def establish_connection(selected_file, selected_location, initial_ip, is_reconnecting=False):
-    # ... (Esta función no cambia) ...
     try:
         global ORIGINAL_DEFAULT_ROUTE, ORIGINAL_DEFAULT_DEV, ORIGINAL_DEFAULT_GW, ACTIVE_CONNECTION_NAME
         clear_screen()
@@ -245,7 +243,7 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
 
         if not success:
             safe_print(f"{YELLOW}Fallo al iniciar OpenVPN. Mostrando resumen de error en 3 segundos...{NC}")
-            time.sleep(3) 
+            time.sleep(3)
             display_failure_banner(f"No se pudo establecer la conexión tras {CONNECTION_ATTEMPTS} intentos.")
             cleanup(is_failure=is_reconnecting)
             return None, False, None
@@ -368,7 +366,6 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
         return None, False, None
 
 def check_connection_status(expected_ip):
-    # ... (Esta función no cambia) ...
     if subprocess.run(["pgrep", "-x", "openvpn"], capture_output=True).returncode != 0:
         safe_print(f"{RED}ESTADO: ¡DESCONECTADO! (Proceso OpenVPN no encontrado).{NC}")
         return True
@@ -446,11 +443,9 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 
                 vpn_ip, dns_fallback_used, forwarded_port = new_ip, new_dns_fallback, new_port
 
-                # --- INICIO: BLOQUE AÑADIDO PARA LA NOTIFICACIÓN ---
-                title = "VPN Reconectada: ¡Acción Requerida!" # <<< AÑADIDO
-                message = f"El puerto ha cambiado a {forwarded_port}.\nDebes reiniciar tus aplicaciones (aMule, Transmission) para usar la nueva configuración." # <<< AÑADIDO
-                send_critical_notification(title, message) # <<< AÑADIDO
-                # --- FIN: BLOQUE AÑADIDO ---
+                title = "VPN Reconectada: ¡Acción Requerida!"
+                message = f"El puerto ha cambiado a {forwarded_port}.\nDebes reiniciar tus aplicaciones (aMule, Transmission) para usar la nueva configuración."
+                send_critical_notification(title, message)
 
                 display_success_banner(selected_location, initial_ip, vpn_ip, True, reconnection_count)
                 safe_print(f"{GREEN}Reconexión exitosa. Reanudando monitorización...{NC}")
@@ -467,7 +462,6 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
         safe_print(f"\n{YELLOW}Script finalizado por el usuario. La ventana se cerrará en 5 segundos...{NC}")
         time.sleep(5)
 
-# ... (El resto del script, main(), get_user_choice(), etc., no cambia) ...
 def display_failure_banner(reason):
     clear_screen()
     safe_print(f"{RED}======================================={NC}")
@@ -607,7 +601,7 @@ def main():
         
         if new_ip:
             safe_print(f"{GREEN}Conexión verificada. Mostrando resumen en 10 segundos...{NC}")
-            time.sleep(10) 
+            time.sleep(10)
 
             display_success_banner(selected_location, initial_ip, new_ip)
             time.sleep(4)
@@ -619,11 +613,18 @@ def main():
 if __name__ == "__main__":
     if "--run-in-terminal" not in sys.argv:
         script_path = os.path.realpath(__file__)
-        terminals = {"gnome-terminal": "--", "konsole": "--hold -e", "xterm": "-e"}
+        # --- LÍNEA MODIFICADA ---
+        terminals = {"gnome-terminal": "--", "konsole": "-e", "xfce4-terminal": "--hold -e", "xterm": "-e"}
         for term, args in terminals.items():
             if which(term):
                 try:
-                    subprocess.run(f"{term} {args} python3 '{script_path}' --run-in-terminal", shell=True, check=True)
+                    # Para xfce4-terminal, el comando debe ser un solo argumento
+                    if term == "xfce4-terminal":
+                         command = f"{term} {args} \"python3 '{script_path}' --run-in-terminal\""
+                    else:
+                         command = f"{term} {args} python3 '{script_path}' --run-in-terminal"
+                    
+                    subprocess.run(command, shell=True, check=True)
                     sys.exit(0)
                 except Exception as e:
                     safe_print(f"{RED}Error al lanzar {term}: {e}{NC}")
