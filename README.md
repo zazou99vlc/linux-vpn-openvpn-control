@@ -6,6 +6,7 @@ Un conjunto de scripts avanzados para gestionar conexiones OpenVPN en Linux de f
 Es una solución completa para cualquiera que use una VPN en un escritorio Linux y se tome la seguridad en serio. El script principal, convpn.py, no es solo un conector. Es un guardián que toma el control total de tu red para asegurar que ni un solo paquete se escape sin encriptar, incluso si la conexión falla.
 
 Los otros scripts son lanzadores para que, con un doble clic, puedas configurar y abrir tus aplicaciones de descarga (Transmission, aMule) con el puerto correcto que te asigna la VPN, sin tocar el teclado.
+
 El Problema: La Puerta Trasera de NetworkManager
 
 Si usas el gestor de conexiones de Linux (NetworkManager) para tu VPN, probablemente no estás tan seguro como crees.
@@ -130,5 +131,5 @@ El script no instala nada de forma permanente ni modifica archivos críticos del
 Aviso Legal
 
 Este es un proyecto personal creado por curiosidad. Funciona para mí, pero úsalo bajo tu propia responsabilidad. No me hago responsable de posibles problemas. Revisa el código para entender lo que hace antes de ejecutarlo.
-FIN DEL ARCHIVO README.md
+
   
