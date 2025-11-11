@@ -79,7 +79,7 @@ fi
 
 # Iniciar la interfaz gráfica de Transmission en segundo plano.
 echo "--> Iniciando la interfaz gráfica de Transmission (GUI)..."
-transmission-gtk >/dev/null 2>&1 &
+nohup transmission-gtk >/dev/null 2>&1 &
 
 echo ">>> ¡Transmission GUI iniciado con el nuevo puerto!"
 exit 0
