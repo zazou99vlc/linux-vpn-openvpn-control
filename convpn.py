@@ -407,8 +407,14 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
             safe_print(f"{BLUE}  VPN EN FUNCIONAMIENTO (Modo Monitor){NC}")
             safe_print(f"{BLUE}======================================={NC}")
             safe_print(f"  Ubicación:         {YELLOW}{selected_location}{NC}")
-            safe_print(f"  Reconexiones:      {RED}{reconnection_count}{NC}")
-            safe_print(f"  Correcciones Ruta: {RED}{route_correction_count}{NC}")
+            
+            # --- INICIO DE LA MODIFICACIÓN ---
+            reconnection_color = RED if reconnection_count > 0 else NC
+            route_correction_color = RED if route_correction_count > 0 else NC
+            safe_print(f"  Reconexiones:      {reconnection_color}{reconnection_count}{NC}")
+            safe_print(f"  Correcciones Ruta: {route_correction_color}{route_correction_count}{NC}")
+            # --- FIN DE LA MODIFICACIÓN ---
+
             if dns_fallback_used: safe_print(f"  DNS Fallback:      {YELLOW}Activo (Servidor DNS con problemas){NC}")
             safe_print(f"  IP Esperada (VPN): {GREEN}{vpn_ip}{NC}")
             
