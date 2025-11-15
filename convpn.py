@@ -216,6 +216,28 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 safe_print(f"{RED}Error crítico: No se pudo determinar la ruta por defecto inicial.{NC}")
                 return None, False, None
 
+        # --- INICIO DEL ÚNICO CAMBIO: PREPARAMOS LAS REGLAS ANTES DE CONECTAR ---
+        safe_print(f"\n{BLUE}Preparando la conexión de red principal para la VPN...{NC}")
+        try:
+            nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True, check=True).stdout
+            for line in nmcli_output.strip().split('\n'):
+                parts = line.split(':')
+                if len(parts) > 1 and parts[1].lower() != 'lo' and not parts[1].lower().startswith('tun'):
+                    ACTIVE_CONNECTION_NAME = parts[0]
+                    break
+            
+            if ACTIVE_CONNECTION_NAME:
+                safe_print(f"  > Neutralizando la ruta por defecto de '{ACTIVE_CONNECTION_NAME}'...")
+                subprocess.run(["sudo", "nmcli", "connection", "modify", ACTIVE_CONNECTION_NAME, "ipv4.never-default", "yes"], check=True, capture_output=True)
+                subprocess.run(["sudo", "nmcli", "connection", "modify", ACTIVE_CONNECTION_NAME, "ipv4.ignore-auto-routes", "yes"], check=True, capture_output=True)
+                safe_print(f"  > Perfil de '{ACTIVE_CONNECTION_NAME}' modificado. Procediendo a conectar la VPN.")
+            else:
+                safe_print(f"{YELLOW}  > Advertencia: No se pudo determinar la conexión principal para neutralizar.{NC}")
+        except Exception as e:
+            safe_print(f"{RED}Error al preparar la conexión principal: {e}{NC}")
+            safe_print(f"{YELLOW}La conexión podría ser inestable. El guardián de rutas actuará si es necesario.{NC}")
+        # --- FIN DEL ÚNICO CAMBIO ---
+
         for attempt in range(1, CONNECTION_ATTEMPTS + 1):
             safe_print(f"{BLUE}Iniciando conexión (Intento {attempt}/{CONNECTION_ATTEMPTS})...{NC}", dynamic=True)
             subprocess.run(["sudo", "killall", "-q", "openvpn"], capture_output=True)
@@ -328,29 +350,9 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
             except Exception as e:
                 safe_print(f"{RED}Advertencia: No se pudo guardar el puerto en el archivo: {e}{NC}")
 
-        safe_print(f"\n{BLUE}Tomando control total de las rutas...{NC}")
-        try:
-            nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True, check=True).stdout
-            for line in nmcli_output.strip().split('\n'):
-                parts = line.split(':')
-                if len(parts) > 1 and parts[1].lower() != 'lo' and not parts[1].lower().startswith('tun'):
-                    ACTIVE_CONNECTION_NAME = parts[0]
-                    break
-            
-            if ACTIVE_CONNECTION_NAME:
-                safe_print(f"  > Neutralizando la ruta por defecto de '{ACTIVE_CONNECTION_NAME}'...")
-                subprocess.run(["sudo", "nmcli", "connection", "modify", ACTIVE_CONNECTION_NAME, "ipv4.never-default", "yes"], check=True, capture_output=True)
-                subprocess.run(["sudo", "nmcli", "connection", "modify", ACTIVE_CONNECTION_NAME, "ipv4.ignore-auto-routes", "yes"], check=True, capture_output=True)
-            else:
-                safe_print(f"{YELLOW}  > Advertencia: No se pudo determinar la conexión principal para neutralizar.{NC}")
-
-            if ORIGINAL_DEFAULT_GW and ORIGINAL_DEFAULT_DEV:
-                safe_print(f"  > Eliminando la ruta por defecto original ({ORIGINAL_DEFAULT_GW})...")
-                subprocess.run(["sudo", "ip", "route", "del", "default", "via", ORIGINAL_DEFAULT_GW, "dev", ORIGINAL_DEFAULT_DEV], check=False, capture_output=True)
-
-        except Exception as e:
-            safe_print(f"{RED}Error al tomar control de las rutas: {e}{NC}")
-            safe_print(f"{YELLOW}La conexión podría ser inestable.{NC}")
+        if ORIGINAL_DEFAULT_GW and ORIGINAL_DEFAULT_DEV:
+            safe_print(f"  > Eliminando la ruta por defecto original ({ORIGINAL_DEFAULT_GW})...")
+            subprocess.run(["sudo", "ip", "route", "del", "default", "via", ORIGINAL_DEFAULT_GW, "dev", ORIGINAL_DEFAULT_DEV], check=False, capture_output=True)
         
         if not check_and_set_default_route():
             safe_print(f"{YELLOW}Fallo al establecer la ruta por defecto. Mostrando resumen de error en 3 segundos...{NC}")
