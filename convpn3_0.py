@@ -497,9 +497,22 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
             reconnection_color = RED if reconnection_count > 0 else NC
             safe_print(f"  Reconexiones Comp: {reconnection_color}{reconnection_count}{NC}")
             
-            route_correction_color = RED if ROUTE_CORRECTION_COUNT > 0 else NC
-            correction_details = f"{ROUTE_CORRECTION_COUNT}"
+            status_color = NC
+            stability_metric = 0.0
+            if CONNECTION_START_TIME and ROUTE_CORRECTION_COUNT > 0:
+                duration_seconds = time.time() - CONNECTION_START_TIME
+                duration_hours = duration_seconds / 3600
+                if duration_hours > 0:
+                    stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
+                    
+                    if stability_metric <= 5:
+                        status_color = GREEN
+                    elif stability_metric <= 20:
+                        status_color = YELLOW
+                    else:
+                        status_color = RED
             
+            correction_line = f"  Correcciones Ruta: {status_color}{ROUTE_CORRECTION_COUNT}{NC}"
             if ROUTE_CORRECTION_COUNT > 0 and LAST_RECONNECTION_TIME:
                 elapsed_seconds = int(time.time() - LAST_RECONNECTION_TIME)
                 
@@ -513,16 +526,12 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                     mins, _ = divmod(remainder, 60)
                     time_str = f"{hours}h {mins}m"
                 
-                correction_details += f" (última hace {time_str})"
+                correction_line += f" (última hace {time_str})"
             
-            safe_print(f"  Correcciones Ruta: {route_correction_color}{correction_details}{NC}")
+            safe_print(correction_line)
 
-            if CONNECTION_START_TIME and ROUTE_CORRECTION_COUNT > 0:
-                duration_seconds = time.time() - CONNECTION_START_TIME
-                duration_hours = duration_seconds / 3600
-                if duration_hours > 0:
-                    stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
-                    safe_print(f"  Estabilidad:       {RED}{stability_metric:.2f} corr./hora{NC}")
+            if stability_metric > 0:
+                safe_print(f"  Estabilidad:       {status_color}{stability_metric:.2f} corr./hora{NC}")
 
             if dns_fallback_used: safe_print(f"  DNS Fallback:      {YELLOW}Activo (Servidor DNS con problemas){NC}")
             safe_print(f"  IP Esperada (VPN): {GREEN}{vpn_ip}{NC}")
