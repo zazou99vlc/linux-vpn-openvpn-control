@@ -47,6 +47,9 @@ ROUTE_CORRECTION_COUNT = 0
 ORIGINAL_RESOLV_CONF_BACKUP = "/tmp/resolv.conf.original.bak"
 CONNECTION_MODIFIED = False
 GUARDIAN_STOP_EVENT = threading.Event()
+RECONNECTION_LOG_FILE = "reconnections.log"
+CONNECTION_START_TIME = None
+LAST_RECONNECTION_TIME = None
 
 # --- FUNCIONES DE UTILIDAD ---
 def safe_print(message, dynamic=False):
@@ -186,6 +189,10 @@ def cleanup(is_failure=False):
     if os.path.exists(port_file_path):
         os.remove(port_file_path)
     
+    reconnection_log_path = os.path.join(script_dir, RECONNECTION_LOG_FILE)
+    if os.path.exists(reconnection_log_path):
+        os.remove(reconnection_log_path)
+    
     CONNECTION_MODIFIED = False
     
     safe_print(f"\n{GREEN}Limpieza completada.{NC}")
@@ -224,8 +231,19 @@ def check_and_set_default_route():
     return True
 
 def establish_connection(selected_file, selected_location, initial_ip, is_reconnecting=False):
-    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_MODIFIED
+    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_MODIFIED, CONNECTION_START_TIME
     try:
+        CONNECTION_START_TIME = time.time()
+
+        try:
+            start_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(CONNECTION_START_TIME))
+            script_dir = os.path.dirname(os.path.realpath(__file__))
+            log_path = os.path.join(script_dir, RECONNECTION_LOG_FILE)
+            with open(log_path, 'w') as f:
+                f.write(f"Hora de conexión: {start_time_str}\n")
+        except Exception as e:
+            safe_print(f"{RED}Error al crear el log de sesión: {e}{NC}")
+
         clear_screen()
         msg = "Se ha perdido la conexión. Intentando reconectar..." if is_reconnecting else f"Conectando a {selected_location}..."
         safe_print(f"{YELLOW}{msg}{NC}\n")
@@ -402,8 +420,6 @@ def check_connection_status(expected_ip):
     try:
         all_routes = subprocess.run(["ip", "route"], capture_output=True, text=True).stdout
         
-        # La conexión es válida si el tráfico principal pasa por la interfaz 'tun'.
-        # Esto es verdad si existen las rutas /1 O si existe una ruta 'default dev tun'.
         is_route_ok = ('0.0.0.0/1' in all_routes and '128.0.0.0/1' in all_routes and 'dev tun' in all_routes) or \
                       ('default dev tun' in all_routes)
         
@@ -411,7 +427,7 @@ def check_connection_status(expected_ip):
             safe_print(f"{RED}ESTADO: ¡DESCONECTADO! (No se encontró una ruta por defecto válida para la VPN).{NC}")
             return True
     except Exception as e:
-        safe_print(f"{RED}ESTADO: ¡DESCONECTADO! (Error al verificar rutas: {e}{NC}")
+        safe_print(f"{RED}ESTADO: ¡DESCONECTADO! (Error al verificar rutas: {e}).{NC}")
         return True
 
     current_ip = ""
@@ -427,26 +443,31 @@ def check_connection_status(expected_ip):
     return True
 
 def route_guardian():
-    global ROUTE_CORRECTION_COUNT
+    global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME
     
     while not GUARDIAN_STOP_EVENT.is_set():
         try:
             ip_route_output = subprocess.run(["ip", "route"], capture_output=True, text=True, check=True).stdout
             
             for line in ip_route_output.strip().split('\n'):
-                # LÓGICA DEL CIRUJANO:
-                # Una ruta es "mala" (una fuga de datos) si cumple dos condiciones:
-                # 1. Es una ruta por defecto (empieza con 'default').
-                # 2. NO es una ruta de la VPN (NO contiene 'dev tun').
-                # Esto caza rutas como 'default via 192.168.1.1' o 'default via 192.168.0.1'
-                # pero ignora rutas válidas como 'default dev tun0 scope link'.
                 if line.startswith('default') and 'dev tun' not in line:
                     
                     offending_route = line.strip()
                     safe_print(f"\n{RED}Guardián: Detectada ruta de leak: '{offending_route}'. Eliminando...{NC}")
                     command = f"sudo ip route del {offending_route}"
                     subprocess.run(command, shell=True, check=False, capture_output=True)
+                    
                     ROUTE_CORRECTION_COUNT += 1
+                    LAST_RECONNECTION_TIME = time.time()
+                    log_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(LAST_RECONNECTION_TIME))
+                    try:
+                        script_dir = os.path.dirname(os.path.realpath(__file__))
+                        log_path = os.path.join(script_dir, RECONNECTION_LOG_FILE)
+                        with open(log_path, 'a') as f:
+                            f.write(f"Corrección a las: {log_time_str}\n")
+                    except Exception as e:
+                        safe_print(f"{RED}Error al escribir en el log de correcciones: {e}{NC}")
+                    
                     break
         except Exception:
             pass
@@ -454,7 +475,7 @@ def route_guardian():
         GUARDIAN_STOP_EVENT.wait(ROUTE_GUARDIAN_INTERVAL)
 
 def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns_fallback_used, forwarded_port):
-    global ROUTE_CORRECTION_COUNT
+    global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME, CONNECTION_START_TIME
     reconnection_count = 0
     
     GUARDIAN_STOP_EVENT.clear()
@@ -469,10 +490,39 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
             safe_print(f"{BLUE}======================================={NC}")
             safe_print(f"  Ubicación:         {YELLOW}{selected_location}{NC}")
             
+            if CONNECTION_START_TIME:
+                start_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(CONNECTION_START_TIME))
+                safe_print(f"  Conectado desde:   {YELLOW}{start_time_str}{NC}")
+
             reconnection_color = RED if reconnection_count > 0 else NC
+            safe_print(f"  Reconexiones Comp: {reconnection_color}{reconnection_count}{NC}")
+            
             route_correction_color = RED if ROUTE_CORRECTION_COUNT > 0 else NC
-            safe_print(f"  Reconexiones:      {reconnection_color}{reconnection_count}{NC}")
-            safe_print(f"  Correcciones Ruta: {route_correction_color}{ROUTE_CORRECTION_COUNT}{NC}")
+            correction_details = f"{ROUTE_CORRECTION_COUNT}"
+            
+            if ROUTE_CORRECTION_COUNT > 0 and LAST_RECONNECTION_TIME:
+                elapsed_seconds = int(time.time() - LAST_RECONNECTION_TIME)
+                
+                if elapsed_seconds < 60:
+                    time_str = f"{elapsed_seconds}s"
+                elif elapsed_seconds < 3600:
+                    mins, secs = divmod(elapsed_seconds, 60)
+                    time_str = f"{mins}m {secs}s"
+                else:
+                    hours, remainder = divmod(elapsed_seconds, 3600)
+                    mins, _ = divmod(remainder, 60)
+                    time_str = f"{hours}h {mins}m"
+                
+                correction_details += f" (última hace {time_str})"
+            
+            safe_print(f"  Correcciones Ruta: {route_correction_color}{correction_details}{NC}")
+
+            if CONNECTION_START_TIME and ROUTE_CORRECTION_COUNT > 0:
+                duration_seconds = time.time() - CONNECTION_START_TIME
+                duration_hours = duration_seconds / 3600
+                if duration_hours > 0:
+                    stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
+                    safe_print(f"  Estabilidad:       {RED}{stability_metric:.2f} corr./hora{NC}")
 
             if dns_fallback_used: safe_print(f"  DNS Fallback:      {YELLOW}Activo (Servidor DNS con problemas){NC}")
             safe_print(f"  IP Esperada (VPN): {GREEN}{vpn_ip}{NC}")
@@ -503,6 +553,10 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                     return
                 
                 vpn_ip, dns_fallback_used, forwarded_port = new_ip, new_dns_fallback, new_port
+
+                safe_print(f"{BLUE}Reiniciando contadores para la nueva sesión...{NC}")
+                ROUTE_CORRECTION_COUNT = 0
+                LAST_RECONNECTION_TIME = None
 
                 title = "VPN Reconectada: ¡Acción Requerida!"
                 message = f"El puerto ha cambiado a {forwarded_port}.\nDebes reiniciar tus aplicaciones (aMule, Transmission) para usar la nueva configuración."
