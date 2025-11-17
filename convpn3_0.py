@@ -540,7 +540,7 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 safe_print(correction_line)
 
                 if duration_seconds > 300:
-                    safe_print(f"  Tasa de Corrección:   {status_color}{stability_metric:.2f} corr./hora{NC}")
+                    safe_print(f"  Tasa Corrección:   {status_color}{stability_metric:.2f} corr./hora{NC}")
 
                 if (ROUTE_CORRECTION_COUNT >= 4 and 
                     duration_seconds > 1800 and 
@@ -593,7 +593,7 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                             next_analysis_info = f" {YELLOW}(Próximo: {next_analysis_time_str}){NC}"
                             if pattern_percentage > 50:
                                 pattern_minutes = median_seconds / 60
-                                line1 = f"  Análisis Patrón:   {GREEN}El {pattern_percentage:.0f}% de las correcciones siguen un patrón de ~{pattern_minutes:.1f} min.{NC}{next_analysis_info}"
+                                line1 = f"  Análisis Patrón:   {GREEN}{pattern_percentage:.0f}% correcciones con patrón ~{pattern_minutes:.1f} min.{NC}{next_analysis_info}"
                                 line2 = f"                     {GREEN}(Posiblemente es el DHCP del router){NC}"
                                 pattern_analysis_line = f"{line1}\n{line2}"
                             else:
