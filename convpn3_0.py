@@ -6,6 +6,7 @@ import sys
 import threading
 import re
 from shutil import which
+from datetime import datetime
 
 # --- BIBLIOTECAS ADICIONALES ---
 try:
@@ -478,6 +479,9 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
     global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME, CONNECTION_START_TIME
     reconnection_count = 0
     
+    ROUTE_CORRECTION_COUNT = 0
+    LAST_RECONNECTION_TIME = None
+    
     GUARDIAN_STOP_EVENT.clear()
     guardian_thread = threading.Thread(target=route_guardian, daemon=True)
     guardian_thread.start()
@@ -488,36 +492,38 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
             safe_print(f"{BLUE}======================================={NC}")
             safe_print(f"{BLUE}  VPN EN FUNCIONAMIENTO (Modo Monitor){NC}")
             safe_print(f"{BLUE}======================================={NC}")
+
             safe_print(f"  Ubicación:         {YELLOW}{selected_location}{NC}")
-            
+
             if CONNECTION_START_TIME:
-                start_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(CONNECTION_START_TIME))
-                safe_print(f"  Conectado desde:   {YELLOW}{start_time_str}{NC}")
+                duration_seconds = time.time() - CONNECTION_START_TIME
+                total_minutes, _ = divmod(int(duration_seconds), 60)
+                hours, minutes = divmod(total_minutes, 60)
+                safe_print(f"  Tiempo conectado:  {hours}h {minutes}m")
+
+            safe_print(f"  IP Esperada (VPN): {GREEN}{vpn_ip}{NC}")
+
+            port_color = GREEN if forwarded_port and forwarded_port.isdigit() else YELLOW
+            port_display = forwarded_port if forwarded_port else "Obteniendo..."
+            safe_print(f"  Puerto Asignado:   {port_color}{port_display}{NC}")
 
             reconnection_color = RED if reconnection_count > 0 else NC
-            safe_print(f"  Reconexiones Comp: {reconnection_color}{reconnection_count}{NC}")
-            
+            safe_print(f"  Reconexiones:      {reconnection_color}{reconnection_count}{NC}")
+
             status_color = NC
-            stability_metric = 0.0
-            if CONNECTION_START_TIME and ROUTE_CORRECTION_COUNT > 0:
+            if ROUTE_CORRECTION_COUNT > 0:
                 duration_seconds = time.time() - CONNECTION_START_TIME
                 duration_hours = duration_seconds / 3600
                 if duration_hours > 0:
-                    stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
-                    
-                    if stability_metric <= 5:
-                        status_color = GREEN
-                    elif stability_metric <= 20:
-                        status_color = YELLOW
-                    else:
-                        status_color = RED
-            
+                    temp_metric = ROUTE_CORRECTION_COUNT / duration_hours
+                    if temp_metric <= 5: status_color = GREEN
+                    elif temp_metric <= 20: status_color = YELLOW
+                    else: status_color = RED
+
             correction_line = f"  Correcciones Ruta: {status_color}{ROUTE_CORRECTION_COUNT}{NC}"
             if ROUTE_CORRECTION_COUNT > 0 and LAST_RECONNECTION_TIME:
                 elapsed_seconds = int(time.time() - LAST_RECONNECTION_TIME)
-                
-                if elapsed_seconds < 60:
-                    time_str = f"{elapsed_seconds}s"
+                if elapsed_seconds < 60: time_str = f"{elapsed_seconds}s"
                 elif elapsed_seconds < 3600:
                     mins, secs = divmod(elapsed_seconds, 60)
                     time_str = f"{mins}m {secs}s"
@@ -525,23 +531,19 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                     hours, remainder = divmod(elapsed_seconds, 3600)
                     mins, _ = divmod(remainder, 60)
                     time_str = f"{hours}h {mins}m"
-                
                 correction_line += f" (última hace {time_str})"
-            
             safe_print(correction_line)
 
-            if stability_metric > 0:
+            duration_seconds = time.time() - CONNECTION_START_TIME
+            if ROUTE_CORRECTION_COUNT > 0 and duration_seconds > 300:
+                duration_hours = duration_seconds / 3600
+                stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
                 safe_print(f"  Estabilidad:       {status_color}{stability_metric:.2f} corr./hora{NC}")
 
-            if dns_fallback_used: safe_print(f"  DNS Fallback:      {YELLOW}Activo (Servidor DNS con problemas){NC}")
-            safe_print(f"  IP Esperada (VPN): {GREEN}{vpn_ip}{NC}")
-            
-            port_color = GREEN if forwarded_port and forwarded_port.isdigit() else YELLOW
-            port_display = forwarded_port if forwarded_port else "Obteniendo..."
-            safe_print(f"  Puerto Asignado:   {port_color}{port_display}{NC}")
+            next_check_time = time.time() + MONITOR_INTERVAL
+            next_check_str = time.strftime('%H:%M:%S', time.localtime(next_check_time))
+            safe_print(f"  Comprobación:      {next_check_str}\n")
 
-            safe_print(f"  Comprobación:      {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            
             status_message = f"{GREEN}ESTADO: Conectado y verificado.{NC}"
 
             if check_connection_status(expected_ip=vpn_ip):
@@ -582,9 +584,7 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 continue
 
             safe_print(status_message)
-            mins, secs = divmod(MONITOR_INTERVAL, 60)
-            t_str = f"{mins} min" if mins > 0 else f"{secs} seg"
-            safe_print(f"\n{YELLOW}Próxima comprobación en {t_str}. Presiona Ctrl+C para salir.{NC}")
+            safe_print(f"\n{YELLOW}Presiona Ctrl+C para salir.{NC}")
             time.sleep(MONITOR_INTERVAL)
     except KeyboardInterrupt:
         safe_print(f"\n{YELLOW}Señal de salida recibida. Deteniendo al guardián de rutas...{NC}")
@@ -593,6 +593,12 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
         safe_print(f"{GREEN}Guardián detenido.{NC}")
 
         cleanup(is_failure=False)
+        
+        safe_print(f"{BLUE}Reiniciando contadores para la próxima sesión...{NC}")
+        ROUTE_CORRECTION_COUNT = 0
+        LAST_RECONNECTION_TIME = None
+        CONNECTION_START_TIME = None
+
         safe_print(f"\n{YELLOW}Saliendo del monitor. Volviendo al menú en 5 segundos...{NC}")
         time.sleep(5)
 
@@ -612,6 +618,11 @@ def display_success_banner(location, initial_ip, new_ip, is_reconnecting=False, 
     if is_reconnecting: safe_print(f"  Reconexiones:  {YELLOW}{count}{NC}")
     safe_print(f"  IP Original:   {YELLOW}{initial_ip}{NC}")
     safe_print(f"  IP VPN:        {GREEN}{new_ip}{NC}\n")
+
+    safe_print(f"  {BLUE}--- Leyenda de Estabilidad (Correcciones/hora) ---{NC}")
+    safe_print(f"  {GREEN}  0-5:   Normalidad{NC}")
+    safe_print(f"  {YELLOW}  6-20:  Ojo (puede ser el router){NC}")
+    safe_print(f"  {RED}  >20:   Alerta (conexión inestable){NC}")
 
 def get_user_choice(locations, last_choice=None):
     safe_print(f"{BLUE}--- UBICACIONES DISPONIBLES ---{NC}")
@@ -770,7 +781,7 @@ def main():
             time.sleep(10)
 
             display_success_banner(selected_location, initial_ip, new_ip)
-            time.sleep(4)
+            time.sleep(12)
             monitor_connection(selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
         else:
             safe_print(f"\n{YELLOW}Volviendo al menú en 5 segundos...{NC}")
