@@ -478,7 +478,9 @@ def route_guardian():
 def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns_fallback_used, forwarded_port):
     global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME, CONNECTION_START_TIME
     reconnection_count = 0
-    
+    last_analysis_time = 0
+    analysis_result_block = None
+
     ROUTE_CORRECTION_COUNT = 0
     LAST_RECONNECTION_TIME = None
     
@@ -493,8 +495,9 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
             safe_print(f"{BLUE}  VPN EN FUNCIONAMIENTO (Modo Monitor){NC}")
             safe_print(f"{BLUE}======================================={NC}")
 
-            safe_print(f"  Ubicación:         {YELLOW}{selected_location}{NC}")
+            safe_print(f"  Ubicación:         {RED}{selected_location}{NC}")
 
+            duration_seconds = 0
             if CONNECTION_START_TIME:
                 duration_seconds = time.time() - CONNECTION_START_TIME
                 total_minutes, _ = divmod(int(duration_seconds), 60)
@@ -510,39 +513,114 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
             reconnection_color = RED if reconnection_count > 0 else NC
             safe_print(f"  Reconexiones:      {reconnection_color}{reconnection_count}{NC}")
 
-            status_color = NC
             if ROUTE_CORRECTION_COUNT > 0:
-                duration_seconds = time.time() - CONNECTION_START_TIME
+                safe_print(f"\n  {BLUE}--- Análisis de Estabilidad de Ruta ---{NC}")
+                
+                status_color = NC
+                stability_metric = 0
                 duration_hours = duration_seconds / 3600
                 if duration_hours > 0:
-                    temp_metric = ROUTE_CORRECTION_COUNT / duration_hours
-                    if temp_metric <= 5: status_color = GREEN
-                    elif temp_metric <= 20: status_color = YELLOW
+                    stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
+                    if stability_metric <= 5: status_color = GREEN
+                    elif stability_metric <= 20: status_color = YELLOW
                     else: status_color = RED
 
-            correction_line = f"  Correcciones Ruta: {status_color}{ROUTE_CORRECTION_COUNT}{NC}"
-            if ROUTE_CORRECTION_COUNT > 0 and LAST_RECONNECTION_TIME:
-                elapsed_seconds = int(time.time() - LAST_RECONNECTION_TIME)
-                if elapsed_seconds < 60: time_str = f"{elapsed_seconds}s"
-                elif elapsed_seconds < 3600:
-                    mins, secs = divmod(elapsed_seconds, 60)
-                    time_str = f"{mins}m {secs}s"
-                else:
-                    hours, remainder = divmod(elapsed_seconds, 3600)
-                    mins, _ = divmod(remainder, 60)
-                    time_str = f"{hours}h {mins}m"
-                correction_line += f" (última hace {time_str})"
-            safe_print(correction_line)
+                correction_line = f"  Correcciones Ruta: {status_color}{ROUTE_CORRECTION_COUNT}{NC}"
+                if LAST_RECONNECTION_TIME:
+                    elapsed_seconds = int(time.time() - LAST_RECONNECTION_TIME)
+                    if elapsed_seconds < 60: time_str = f"{elapsed_seconds}s"
+                    elif elapsed_seconds < 3600:
+                        mins, secs = divmod(elapsed_seconds, 60)
+                        time_str = f"{mins}m {secs}s"
+                    else:
+                        hours, remainder = divmod(elapsed_seconds, 3600)
+                        mins, _ = divmod(remainder, 60)
+                        time_str = f"{hours}h {mins}m"
+                    correction_line += f" (última hace {time_str})"
+                safe_print(correction_line)
 
-            duration_seconds = time.time() - CONNECTION_START_TIME
-            if ROUTE_CORRECTION_COUNT > 0 and duration_seconds > 300:
-                duration_hours = duration_seconds / 3600
-                stability_metric = ROUTE_CORRECTION_COUNT / duration_hours
-                safe_print(f"  Estabilidad:       {status_color}{stability_metric:.2f} corr./hora{NC}")
+                if duration_seconds > 300:
+                    safe_print(f"  Tasa de Corrección:   {status_color}{stability_metric:.2f} corr./hora{NC}")
+
+                if (ROUTE_CORRECTION_COUNT >= 4 and 
+                    duration_seconds > 1800 and 
+                    (time.time() - last_analysis_time) > 900 and
+                    stability_metric > 5):
+                    try:
+                        script_dir = os.path.dirname(os.path.realpath(__file__))
+                        log_path = os.path.join(script_dir, RECONNECTION_LOG_FILE)
+                        timestamps = []
+                        with open(log_path, 'r') as f:
+                            for line in f:
+                                if line.startswith("Corrección a las:"):
+                                    time_str = line.replace("Corrección a las: ", "").strip()
+                                    timestamps.append(datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'))
+                        
+                        filtered_timestamps = []
+                        if timestamps:
+                            ECO_THRESHOLD_SECONDS = 3
+                            filtered_timestamps.append(timestamps[0])
+                            for i in range(1, len(timestamps)):
+                                time_difference = (timestamps[i] - filtered_timestamps[-1]).total_seconds()
+                                if time_difference > ECO_THRESHOLD_SECONDS:
+                                    filtered_timestamps.append(timestamps[i])
+                        
+                        graph_line = ""
+                        if filtered_timestamps:
+                            graph_width = 40
+                            seconds_per_slot = duration_seconds / graph_width
+                            slots = ['.'] * graph_width
+                            first_connection_time = datetime.fromtimestamp(CONNECTION_START_TIME)
+                            for ts in filtered_timestamps:
+                                correction_seconds_from_start = (ts - first_connection_time).total_seconds()
+                                slot_index = int(correction_seconds_from_start / seconds_per_slot)
+                                if 0 <= slot_index < graph_width:
+                                    slots[slot_index] = f"{RED}X{GREEN}"
+                            graph_content = "".join(slots)
+                            graph_line = f"  Distribución:      {GREEN}[{graph_content}]{NC}"
+
+                        pattern_analysis_line = ""
+                        if len(filtered_timestamps) > 1:
+                            intervals = [(filtered_timestamps[i] - filtered_timestamps[i-1]).total_seconds() for i in range(1, len(filtered_timestamps))]
+                            sorted_intervals = sorted(intervals)
+                            n = len(sorted_intervals)
+                            mid = n // 2
+                            median_seconds = (sorted_intervals[mid - 1] + sorted_intervals[mid]) / 2 if n % 2 == 0 else sorted_intervals[mid]
+                            tolerance_seconds = 30
+                            pattern_count = sum(1 for i in intervals if (median_seconds - tolerance_seconds) <= i <= (median_seconds + tolerance_seconds))
+                            pattern_percentage = (pattern_count / len(intervals)) * 100
+                            next_analysis_time_str = time.strftime('%H:%M', time.localtime(time.time() + 900))
+                            next_analysis_info = f" {YELLOW}(Próximo: {next_analysis_time_str}){NC}"
+                            if pattern_percentage > 50:
+                                pattern_minutes = median_seconds / 60
+                                line1 = f"  Análisis Patrón:   {GREEN}El {pattern_percentage:.0f}% de las correcciones siguen un patrón de ~{pattern_minutes:.1f} min.{NC}{next_analysis_info}"
+                                line2 = f"                     {GREEN}(Posiblemente es el DHCP del router){NC}"
+                                pattern_analysis_line = f"{line1}\n{line2}"
+                            else:
+                                pattern_analysis_line = f"  Análisis Patrón:   {YELLOW}No se detecta un patrón determinado en las correcciones.{NC}{next_analysis_info}"
+                        
+                        current_block = ""
+                        if graph_line: current_block += f"\n{graph_line}"
+                        if pattern_analysis_line: current_block += f"\n{pattern_analysis_line}"
+                        analysis_result_block = current_block
+                        last_analysis_time = time.time()
+                    except Exception:
+                        pass
+                
+                if duration_seconds > 1800 and analysis_result_block and stability_metric > 5:
+                    safe_print(analysis_result_block)
 
             next_check_time = time.time() + MONITOR_INTERVAL
             next_check_str = time.strftime('%H:%M:%S', time.localtime(next_check_time))
-            safe_print(f"  Comprobación:      {next_check_str}\n")
+            
+            cycle_seconds = MONITOR_INTERVAL
+            if cycle_seconds < 60:
+                cycle_str = f"{cycle_seconds}s"
+            else:
+                mins, secs = divmod(cycle_seconds, 60)
+                cycle_str = f"{mins}m {secs}s"
+            
+            safe_print(f"\n  Comprobación:      {next_check_str} {YELLOW}(Ciclo: {cycle_str}){NC}\n")
 
             status_message = f"{GREEN}ESTADO: Conectado y verificado.{NC}"
 
@@ -568,6 +646,8 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 safe_print(f"{BLUE}Reiniciando contadores para la nueva sesión...{NC}")
                 ROUTE_CORRECTION_COUNT = 0
                 LAST_RECONNECTION_TIME = None
+                last_analysis_time = 0
+                analysis_result_block = None
 
                 title = "VPN Reconectada: ¡Acción Requerida!"
                 message = f"El puerto ha cambiado a {forwarded_port}.\nDebes reiniciar tus aplicaciones (aMule, Transmission) para usar la nueva configuración."
