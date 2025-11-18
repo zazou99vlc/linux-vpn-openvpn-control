@@ -41,7 +41,7 @@ CURL_TIMEOUT = 4
 IP_RETRY_DELAY = 5
 PING_TIMEOUT = 4
 API_TIMEOUT = 5
-ANALYSIS_INTERVAL = 900  # 15 minutos. Frecuencia del análisis de estabilidad de ruta.
+ANALYSIS_INTERVAL = 600  # 15 minutos. Frecuencia del análisis de estabilidad de ruta.
 ANALYSIS_MIN_DURATION = 1800 # 30 minutos. Tiempo mínimo conectado para que se active el análisis.
 MAX_LOCATION_NAME_LENGTH = 15 # Longitud máxima para los nombres de ubicación antes de truncar.
 
