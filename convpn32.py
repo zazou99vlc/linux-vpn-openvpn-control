@@ -41,6 +41,9 @@ CURL_TIMEOUT = 4
 IP_RETRY_DELAY = 5
 PING_TIMEOUT = 4
 API_TIMEOUT = 5
+ANALYSIS_INTERVAL = 900  # 15 minutos. Frecuencia del análisis de estabilidad de ruta.
+ANALYSIS_MIN_DURATION = 1800 # 30 minutos. Tiempo mínimo conectado para que se active el análisis.
+MAX_LOCATION_NAME_LENGTH = 15 # Longitud máxima para los nombres de ubicación antes de truncar.
 
 # --- VARIABLES GLOBALES ---
 ORIGINAL_DEFAULT_ROUTE_DETAILS = None
@@ -72,6 +75,18 @@ def send_critical_notification(title, message):
 def is_valid_ip(ip_string):
     if not ip_string: return False
     return re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", ip_string) is not None
+
+def check_pass_file_permissions(pass_file_path):
+    try:
+        # stat.S_IRWXG (group) y stat.S_IRWXO (other)
+        # Si los permisos para grupo u otros no son cero, es inseguro.
+        if os.stat(pass_file_path).st_mode & 0o077:
+            title = "Advertencia de Seguridad de VPN"
+            message = f"El archivo '{os.path.basename(pass_file_path)}' tiene permisos inseguros.\nSe recomienda ejecutar: chmod 600 {pass_file_path}"
+            if which("notify-send"):
+                subprocess.run(["notify-send", "--urgency=normal", "--icon=network-vpn", title, message])
+    except Exception as e:
+        safe_print(f"{RED}No se pudieron verificar los permisos de pass.txt: {e}{NC}")
 
 def get_current_default_route_details():
     try:
@@ -124,6 +139,27 @@ def get_forwarded_port(internal_ip):
             safe_print(f"{RED}Respuesta inesperada de la API de puertos.{NC}")
     
     return "No Disponible"
+
+def parse_location_name(filename):
+    """
+    Extrae un nombre de ubicación legible de un nombre de archivo .ovpn y lo trunca si es necesario.
+    """
+    base_name = filename.replace('.ovpn', '')
+    parts = base_name.split('-')
+    parsed_name = ""
+
+    # Lógica original: si hay al menos 3 partes, la ubicación es la tercera.
+    if len(parts) > 2 and parts[2]:
+        parsed_name = parts[2]
+    else:
+        # Fallback: si no se cumple el patrón, usar el nombre del archivo.
+        parsed_name = base_name
+
+    # Aplicar truncado universal al resultado.
+    if len(parsed_name) > MAX_LOCATION_NAME_LENGTH:
+        return parsed_name[:MAX_LOCATION_NAME_LENGTH - 3] + "..."
+    else:
+        return parsed_name
 
 def cleanup(is_failure=False):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS, ORIGINAL_RESOLV_CONF_BACKUP, CONNECTION_MODIFIED
@@ -543,8 +579,8 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                     safe_print(f"  Tasa Corrección:   {status_color}{stability_metric:.2f} corr./hora{NC}")
 
                 if (ROUTE_CORRECTION_COUNT >= 4 and 
-                    duration_seconds > 1800 and 
-                    (time.time() - last_analysis_time) > 900 and
+                    duration_seconds > ANALYSIS_MIN_DURATION and 
+                    (time.time() - last_analysis_time) > ANALYSIS_INTERVAL and
                     stability_metric > 5):
                     try:
                         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -589,7 +625,7 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                             tolerance_seconds = 30
                             pattern_count = sum(1 for i in intervals if (median_seconds - tolerance_seconds) <= i <= (median_seconds + tolerance_seconds))
                             pattern_percentage = (pattern_count / len(intervals)) * 100
-                            next_analysis_time_str = time.strftime('%H:%M', time.localtime(time.time() + 900))
+                            next_analysis_time_str = time.strftime('%H:%M', time.localtime(time.time() + ANALYSIS_INTERVAL))
                             next_analysis_info = f" {YELLOW}(Próximo: {next_analysis_time_str}){NC}"
                             if pattern_percentage > 50:
                                 pattern_minutes = median_seconds / 60
@@ -607,7 +643,7 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                     except Exception:
                         pass
                 
-                if duration_seconds > 1800 and analysis_result_block and stability_metric > 5:
+                if duration_seconds > ANALYSIS_MIN_DURATION and analysis_result_block and stability_metric > 5:
                     safe_print(analysis_result_block)
 
             next_check_time = time.time() + MONITOR_INTERVAL
@@ -706,14 +742,76 @@ def display_success_banner(location, initial_ip, new_ip, is_reconnecting=False, 
 
 def get_user_choice(locations, last_choice=None):
     safe_print(f"{BLUE}--- UBICACIONES DISPONIBLES ---{NC}")
-    for i, location in enumerate(locations, 1): safe_print(f"  {i}) {location}")
+    num_locations = len(locations)
+    if num_locations == 0:
+        safe_print(f"{RED}No se encontraron ubicaciones.{NC}")
+    else:
+        try:
+            # Obtener el ancho actual de la terminal
+            terminal_width = os.get_terminal_size().columns
+        except OSError:
+            # Si no se puede detectar (ej. en un entorno no interactivo), usar un ancho por defecto
+            terminal_width = 80
+
+        # Calcular el número de dígitos del número más alto para alinear los paréntesis
+        max_digits = len(str(num_locations))
+
+        # Calcular el ancho del elemento más largo de la lista
+        max_item_width = 0
+        for i, location in enumerate(locations):
+            item_length = len(f"  {i + 1:>{max_digits}}) {location}")
+            if item_length > max_item_width:
+                max_item_width = item_length
+        
+        column_spacing = 4
+        single_col_total_width = max_item_width + column_spacing
+
+        # Calcular cuántas columnas caben en la terminal
+        num_columns = terminal_width // single_col_total_width
+        if num_columns == 0:
+            num_columns = 1
+
+        # Calcular el número de filas necesarias
+        num_rows = (num_locations + num_columns - 1) // num_columns
+
+        # Imprimir la grilla de forma dinámica
+        for i in range(num_rows):
+            line_parts = []
+            for j in range(num_columns):
+                # Imprimir por columnas (primero hacia abajo, luego la siguiente columna)
+                index = i + j * num_rows
+                if index < num_locations:
+                    num = index + 1
+                    num_str = f"{num:>{max_digits}}"
+                    part_uncolored = f"  {num_str}) {locations[index]}"
+                    
+                    # Aplicar resaltado si es la opción por defecto
+                    if last_choice is not None and num == last_choice:
+                        part_colored = f"{YELLOW}{part_uncolored}{NC}"
+                        
+                        # Si no es la última columna, añadir padding manual
+                        if j < num_columns - 1:
+                            padding_needed = single_col_total_width - len(part_uncolored)
+                            line_parts.append(part_colored + (' ' * padding_needed))
+                        else:
+                            line_parts.append(part_colored)
+                    else:
+                        # Si no es la última columna, añadir padding con formato
+                        if j < num_columns - 1:
+                            line_parts.append(f"{part_uncolored:<{single_col_total_width}}")
+                        else:
+                            line_parts.append(part_uncolored)
+            
+            safe_print("".join(line_parts))
+
     safe_print("")
+    safe_print(f"{RED}Ctrl+C para salir{NC}")
 
     prompt = f"Elige (1-{len(locations)}): "
     if last_choice is not None:
         try:
             default_name = locations[last_choice - 1]
-            prompt = f"Elige (1-{len(locations)}) o Intro para '{default_name}': "
+            prompt = f"Elige (1-{len(locations)}) o Intro para '{YELLOW}{default_name}{NC}': "
         except IndexError:
             last_choice = None
     
@@ -815,14 +913,17 @@ def main():
     try:
         ovpn_files = sorted([f for f in os.listdir(script_dir) if f.endswith(".ovpn")])
         if not ovpn_files: raise FileNotFoundError("No se encontraron archivos .ovpn")
-        locations = [f.replace('.ovpn', '').split('-')[2] if len(f.split('-')) > 2 else f.replace('.ovpn', '') for f in ovpn_files]
+        locations = [parse_location_name(f) for f in ovpn_files]
     except Exception as e:
         safe_print(f"{RED}Error al procesar los archivos .ovpn en '{script_dir}': {e}{NC}")
         sys.exit(1)
 
-    if not os.path.exists(os.path.join(script_dir, "pass.txt")):
+    pass_file = os.path.join(script_dir, "pass.txt")
+    if not os.path.exists(pass_file):
         safe_print(f"{RED}Error: No se encuentra el archivo 'pass.txt' en '{script_dir}'.{NC}")
         sys.exit(1)
+    
+    check_pass_file_permissions(pass_file)
 
     while True:
         clear_screen()
