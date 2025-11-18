@@ -27,13 +27,13 @@ fi
 
 # --- FUNCIÓN AUXILIAR ---
 # Comprueba si una línea existe en un archivo y la añade si no.
+# Ignora espacios en blanco al principio y al final de la línea.
 # Devuelve 1 si ha modificado el archivo, 0 si no.
 ensure_line_exists() {
     local line_to_check="$1"
     local file="$2"
-    # Usamos -F para tratar la cadena como texto fijo, no como regex.
-    # Usamos -x para que coincida la línea completa.
-    if ! grep -qFx "$line_to_check" "$file"; then
+    # Usamos una expresión regular para ignorar espacios al principio/final.
+    if ! grep -q "^\s*${line_to_check}\s*$" "$file"; then
         echo "$line_to_check" >> "$file"
         return 1 # Modificado
     fi
