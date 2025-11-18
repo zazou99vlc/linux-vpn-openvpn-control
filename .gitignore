@@ -1,0 +1,16 @@
+cat <<EOL > .gitignore
+# Archivos generados por el script de Python
+openvpn.log
+forwarded_port.txt
+last_choice.txt
+reconnections.log
+*.ovpn
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
+
+# Archivos de configuración de editores (opcional pero recomendado)
+.vscode/
+.idea/
+EOL
