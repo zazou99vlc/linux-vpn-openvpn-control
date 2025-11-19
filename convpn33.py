@@ -843,7 +843,30 @@ def main():
     script_dir = os.path.dirname(os.path.realpath(__file__))
     
     clear_screen()
-    safe_print(f"{YELLOW}Se solicitará la contraseña de administrador.{NC}")
+# --- PANTALLA DE BIENVENIDA Y GUÍA RÁPIDA ---
+    safe_print(f"{BLUE}====================================================={NC}")
+    safe_print(f"{BLUE}      Bienvenido al Asistente de Conexión VPN      {NC}")
+    safe_print(f"{BLUE}====================================================={NC}")
+    
+    safe_print(f"\n{YELLOW}--- Guía Rápida ---{NC}")
+    
+    safe_print(f"\n{GREEN}1.{NC} Copia todos los archivos de configuración .ovpn de tu")
+    safe_print("   proveedor en esta misma carpeta.")
+
+    safe_print(f"\n{GREEN}2.{NC} Crea un archivo 'pass.txt' aquí. La primera línea debe")
+    safe_print("   ser tu nombre de usuario y la segunda tu contraseña.")
+    safe_print(f"   {YELLOW}Seguridad: Se recomienda ejecutar 'chmod 600 pass.txt'.{NC}")
+
+    safe_print(f"\n{GREEN}3.{NC} Ejecuta el script 'modificar-ovpn.sh' una única vez.")
+    safe_print("   Este paso es **requerido por el asistente** para:")
+    safe_print("     a) Automatizar el login usando 'pass.txt'.")
+    safe_print("     b) Reducir el 'ruido' en los logs de OpenVPN para un mejor análisis.")
+
+    # --- JUSTIFICACIÓN DE SUDO ---
+    safe_print(f"\n{RED}--------------------------------------------------------------------{NC}")
+    safe_print(f"{RED}A continuación, se solicitará tu contraseña de administrador (sudo).{NC}")
+    safe_print(f"{RED}Es necesaria para poder modificar las rutas de red y gestionar la conexión.{NC}")
+    safe_print(f"{RED}--------------------------------------------------------------------{NC}\n")
     if subprocess.run(["sudo", "-v"], capture_output=True).returncode != 0:
         safe_print(f"{RED}Error: No se pudo obtener privilegios de sudo.{NC}")
         sys.exit(1)
@@ -930,8 +953,8 @@ def main():
         safe_print(f"{BLUE}======================================={NC}")
         safe_print(f"{BLUE}    Asistente de Conexión VPN")
         safe_print(f"{BLUE}======================================={NC}")
-        safe_print(f"\nDirectorio: {script_dir}\nIP Original: {YELLOW}{initial_ip}{NC}\n")
-
+#        safe_print(f"\nDirectorio: {script_dir}\nIP Original: {YELLOW}{initial_ip}{NC}\n")
+        safe_print(f"\nIP Original: {YELLOW}{initial_ip}{NC}\n")
         last_choice_from_file = None
         last_choice_path = os.path.join(script_dir, LAST_CHOICE_FILE)
         if os.path.exists(last_choice_path):
