@@ -50,9 +50,17 @@ while IFS= read -r file; do
     total_files=$((total_files + 1))
     file_was_modified=0
 
+    # --- CORRECCIÓN AÑADIDA ---
+    # Nos aseguramos de que el archivo termine con un salto de línea antes de modificarlo.
+    # Esto previene que las nuevas directivas se peguen a la última línea existente.
+    if [[ -n "$(tail -c1 -- "$file")" ]]; then
+        echo >> "$file"
+    fi
+
     # 1. Lógica especial para 'auth-user-pass' (reemplazo)
-    if grep -q '^auth-user-pass$' "$file"; then
-        sed -i 's/^auth-user-pass$/auth-user-pass pass.txt/' "$file"
+    # Usa \s* para ser flexible con los espacios en blanco y comprueba que no esté ya modificado.
+    if grep -q "^\s*auth-user-pass\s*$" "$file" && ! grep -q "^\s*auth-user-pass\s\+pass.txt\s*$" "$file"; then
+        sed -i 's/^\s*auth-user-pass\s*$/auth-user-pass pass.txt/' "$file"
         file_was_modified=1
     fi
 
