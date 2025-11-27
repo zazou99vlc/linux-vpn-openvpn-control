@@ -140,7 +140,7 @@ TRANSLATIONS = {
         "lbl_check": "Comprobación:".ljust(L_WIDTH),
         "ana_header": "--- Análisis de Estabilidad de Ruta ---",
         "ana_pattern_yes": "{}% correcciones con patrón ~{:.1f} min.",
-        "ana_pattern_router": "(Posiblemente DHCP del router)",
+        "ana_pattern_router": " (Posiblemente DHCP del router)",
         "ana_pattern_no": "No se detecta patrón en las correcciones.",
         "status_ok": "ESTADO: Conectado y verificado.",
         "reconn_fail_kill": "Reconexión fallida. Corte de emergencia activado.",
@@ -166,7 +166,7 @@ TRANSLATIONS = {
         "guide_title": "--- Guía Rápida ---",
         "guide_1": "1. Copia tus archivos .ovpn en esta carpeta.",
         "guide_2": "2. No necesitas modificar nada. El script inyecta las\n   configuraciones necesarias al vuelo.",
-        "guide_3": "3. Configure credentials in the menu (M) or al\n   iniciar la conexión por primera vez.",
+        "guide_3": "3. Configura tus credenciales en el menú (M) o al\n   iniciar la conexión por primera vez.",
         "guide_4": "4. Sal siempre con Ctrl+C. Si pierdes red, reinicia el script.",
         "check_conn": "Verificando conectividad e IP pública...",
         "conn_confirmed": "Conectividad confirmada.",
@@ -202,7 +202,7 @@ TRANSLATIONS = {
         "cfg_creds_title": "Configurar Credenciales VPN",
         "cfg_creds_info": "Estas credenciales se guardarán localmente protegidas.",
         "cfg_user": "Usuario VPN: ",
-        "cfg_pass": "VPN Password: ",
+        "cfg_pass": "Contraseña VPN: ",
         "cfg_creds_saved": "Credenciales guardadas y protegidas.",
         "cfg_creds_err": "Datos inválidos. No se guardó nada.",
         "err_no_creds": "Error: No hay credenciales configuradas.",
@@ -295,7 +295,7 @@ TRANSLATIONS = {
         "lbl_check": "Next Check:".ljust(L_WIDTH),
         "ana_header": "--- Route Stability Analysis ---",
         "ana_pattern_yes": "{}% corrections with pattern ~{:.1f} min.",
-        "ana_pattern_router": "(Possibly router DHCP)",
+        "ana_pattern_router": " (Possibly router DHCP)",
         "ana_pattern_no": "No pattern detected in corrections.",
         "status_ok": "STATUS: Connected and verified.",
         "reconn_fail_kill": "Reconnection failed. Emergency cut activated.",
@@ -472,6 +472,19 @@ def detect_main_iface_nm():
     except Exception:
         pass
     return None
+
+def get_all_physical_interfaces():
+    """Devuelve todas las interfaces físicas (wifi/ethernet) existan o no conexión activa."""
+    interfaces = []
+    try:
+        out = subprocess.run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"], capture_output=True, text=True).stdout
+        for line in out.strip().split('\n'):
+            if ":" in line:
+                dev, dtype = line.split(":")
+                if dtype in ["wifi", "ethernet"] and not dev.startswith("p2p"):
+                    interfaces.append(dev)
+    except Exception: pass
+    return interfaces
 
 def is_systemd_resolved_active():
     try:
@@ -688,17 +701,13 @@ def cleanup(is_failure=False):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_MODIFIED, ACTIVE_FIREWALL_INTERFACE
     safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
 
-    if ACTIVE_FIREWALL_INTERFACE:
-        manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
+    # Limpieza paranoica: Barrer todas las interfaces físicas
+    for iface in get_all_physical_interfaces():
+        manage_dns_leak_firewall(iface, action="del")
         if is_systemd_resolved_active():
-            subprocess.run(["sudo", "resolvectl", "revert", ACTIVE_FIREWALL_INTERFACE], check=False, stderr=subprocess.DEVNULL)
-        ACTIVE_FIREWALL_INTERFACE = None
-    else:
-        current_iface = detect_main_iface_nm()
-        if current_iface:
-            manage_dns_leak_firewall(current_iface, action="del")
-            if is_systemd_resolved_active():
-                subprocess.run(["sudo", "resolvectl", "revert", current_iface], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
+    
+    ACTIVE_FIREWALL_INTERFACE = None
 
     script_dir = os.path.dirname(os.path.realpath(__file__))
     dns_backup_path = os.path.join(script_dir, DNS_BACKUP_FILE)
@@ -1397,11 +1406,11 @@ def main():
     
     threading.Thread(target=keep_sudo_alive, daemon=True).start()
 
-    main_iface = detect_main_iface_nm()
-    if main_iface:
-        manage_dns_leak_firewall(main_iface, action="del")
+    # --- LIMPIEZA PARANOICA AL INICIO ---
+    for iface in get_all_physical_interfaces():
+        manage_dns_leak_firewall(iface, action="del")
         if is_systemd_resolved_active():
-            subprocess.run(["sudo", "resolvectl", "revert", main_iface], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
 
     dns_backup_path = os.path.join(script_dir, DNS_BACKUP_FILE)
     backup_original_dns(script_dir, dns_backup_path)
@@ -1415,10 +1424,13 @@ def main():
         safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
     except Exception:
         safe_print(f"{YELLOW}{T('repair_attempt')}{NC}")
-        if main_iface: 
-            manage_dns_leak_firewall(main_iface, action="del")
+        
+        # Limpieza paranoica también en reparación
+        for iface in get_all_physical_interfaces():
+            manage_dns_leak_firewall(iface, action="del")
             if is_systemd_resolved_active():
-                subprocess.run(["sudo", "resolvectl", "revert", main_iface], check=False, stderr=subprocess.DEVNULL)
+                subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
+
         try:
             safe_print(T('repair_restoring'))
             nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True).stdout
