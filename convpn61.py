@@ -58,7 +58,7 @@ GUARDIAN_STOP_EVENT = threading.Event()
 CONNECTION_START_TIME = None
 LAST_RECONNECTION_TIME = None
 CURRENT_LANG = "es" 
-ACTIVE_FIREWALL_INTERFACE = None # Rastro para limpieza de firewall
+ACTIVE_FIREWALL_INTERFACE = None 
 
 # --- DICCIONARIO DE IDIOMAS ---
 L_WIDTH = 22 
@@ -220,7 +220,6 @@ TRANSLATIONS = {
         "fw_fail": "Aviso: No se pudo gestionar firewall (iptables)."
     },
     "en": {
-        # (Se mantiene igual, solo añado las nuevas keys)
         "closing": "Script will close in 10 seconds...",
         "sudo_simple": "Administrator access (sudo) will be requested to run\nOpenVPN, firewall and manage the network.",
         "sudo_error": "Error: Could not get sudo privileges.",
@@ -461,7 +460,6 @@ def log_dns_action(script_dir, action, data):
         pass
 
 def detect_main_iface_nm():
-    """Detecta la interfaz principal (dispositivo) gestionada por NetworkManager."""
     try:
         nmcli_output = subprocess.run(
             ["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"],
@@ -470,47 +468,34 @@ def detect_main_iface_nm():
         for line in nmcli_output.strip().split('\n'):
             parts = line.split(':')
             if len(parts) > 1 and parts[1].lower() != 'lo' and not parts[1].lower().startswith('tun'):
-                return parts[1] # Devuelve ej: wlan0, eth0
+                return parts[1] 
     except Exception:
         pass
     return None
 
 def is_systemd_resolved_active():
-    """El Semáforo: Devuelve True si systemd-resolved está vivo (Arch), False si no (Manjaro)."""
     try:
-        # Check silencioso
         subprocess.run(["resolvectl", "status"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
     except Exception:
         return False
 
 def manage_dns_leak_firewall(interface, action="add"):
-    """
-    Gestiona reglas de iptables para bloquear fugas DNS en la interfaz física.
-    action="add" -> Bloquea (DROP) puerto 53
-    action="del" -> Borra reglas
-    """
     if not interface: return
-    
     flag = "-I" if action == "add" else "-D"
-    
     try:
-        # Bloquear UDP 53
         subprocess.run(
             ["sudo", "iptables", flag, "OUTPUT", "-o", interface, "-p", "udp", "--dport", "53", "-j", "DROP"],
             check=False, stderr=subprocess.DEVNULL
         )
-        # Bloquear TCP 53
         subprocess.run(
             ["sudo", "iptables", flag, "OUTPUT", "-o", interface, "-p", "tcp", "--dport", "53", "-j", "DROP"],
             check=False, stderr=subprocess.DEVNULL
         )
-        
         if action == "add":
             safe_print(f"{YELLOW}{T('firewall_add', interface)}{NC}")
         else:
             safe_print(f"{BLUE}{T('firewall_del', interface)}{NC}")
-            
     except Exception:
         safe_print(f"{RED}{T('fw_fail')}{NC}")
 
@@ -560,26 +545,15 @@ def detect_tun_interface_from_log(script_dir):
     return None
 
 def apply_dns_arch_native(tun_iface, dns_list, phys_iface, script_dir):
-    """Lógica específica para Arch Linux / systemd-resolved"""
     safe_print(f"{BLUE}{T('arch_apply', tun_iface)}{NC}")
-    
-    # 1. Asignar DNS a la interfaz TUN
-    # Si la lista está vacía, fallback 1.1.1.1
     final_dns = dns_list if dns_list else ["1.1.1.1", "1.0.0.1"]
-    
     try:
-        # Asignar DNS
         subprocess.run(["sudo", "resolvectl", "dns", tun_iface] + final_dns, check=True)
-        # Asignar Dominio Mágico (~.)
         subprocess.run(["sudo", "resolvectl", "domain", tun_iface, "~."], check=True)
-        # Default Route explícito
         subprocess.run(["sudo", "resolvectl", "default-route", tun_iface, "yes"], check=True)
-        
-        # Limpiar DNS de la física (Importante)
         if phys_iface:
              subprocess.run(["sudo", "resolvectl", "dns", phys_iface, ""], check=False, stderr=subprocess.DEVNULL)
              subprocess.run(["sudo", "resolvectl", "flush-caches"], check=False)
-
         log_dns_action(script_dir, "ARCH_APPLY", f"Interface: {tun_iface}, DNS: {final_dns}")
         return True
     except Exception as e:
@@ -588,11 +562,8 @@ def apply_dns_arch_native(tun_iface, dns_list, phys_iface, script_dir):
 
 def apply_dns_via_nm(tun_iface, dns_list, script_dir):
     if not tun_iface: return False
-    
-    # Fallback si vacía
     final_dns = dns_list if dns_list else ["1.1.1.1", "1.0.0.1"]
     dns_str = " ".join(final_dns)
-    
     safe_print(f"{BLUE}Applying DNS to {tun_iface}: {dns_str}{NC}")
     try:
         cmd = ["sudo", "nmcli", "device", "modify", tun_iface, "ipv4.dns", dns_str, "ipv4.ignore-auto-dns", "yes"]
@@ -717,8 +688,6 @@ def cleanup(is_failure=False):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_MODIFIED, ACTIVE_FIREWALL_INTERFACE
     safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
 
-    # --- LIMPIEZA CRÍTICA DE FIREWALL ANTES DE NADA ---
-    # Intentamos limpiar en la interfaz que usamos, o detectamos la actual
     if ACTIVE_FIREWALL_INTERFACE:
         manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
         ACTIVE_FIREWALL_INTERFACE = None
@@ -726,7 +695,6 @@ def cleanup(is_failure=False):
         current_iface = detect_main_iface_nm()
         if current_iface:
             manage_dns_leak_firewall(current_iface, action="del")
-    # --------------------------------------------------
 
     script_dir = os.path.dirname(os.path.realpath(__file__))
     dns_backup_path = os.path.join(script_dir, DNS_BACKUP_FILE)
@@ -844,7 +812,6 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
 
         safe_print(f"\n{BLUE}{T('prep_net')}{NC}")
         
-        # Identificar conexión y dispositivo físico
         active_connection_name = None
         physical_device = detect_main_iface_nm()
         
@@ -899,15 +866,12 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
             if success:
                 safe_print(f"{GREEN}{T('ovpn_started')}{NC}")
                 
-                # --- LÓGICA DE INYECCIÓN DNS (ARCH vs MANJARO) ---
                 vpn_dns = extract_vpn_dns_from_log(script_dir)
                 if not vpn_dns:
                     safe_print(f"{YELLOW}{T('dns_extract_fail')}{NC}")
-                    # Fallback implícito será manejado por las funciones de apply
                 
                 tun_iface = detect_tun_interface_from_log(script_dir)
                 if tun_iface:
-                    # SEMÁFORO: ¿Está systemd-resolved vivo?
                     if is_systemd_resolved_active():
                         safe_print(f"{YELLOW}{T('arch_detect')}{NC}")
                         apply_dns_arch_native(tun_iface, vpn_dns, physical_device, script_dir)
@@ -917,11 +881,9 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 else:
                     safe_print(f"{YELLOW}Warning: TUN interface not detected for DNS.{NC}")
                 
-                # --- FIREWALL BLOQUEO PUERTO 53 (MURO DE SEGURIDAD) ---
                 if physical_device:
                     manage_dns_leak_firewall(physical_device, action="add")
                     ACTIVE_FIREWALL_INTERFACE = physical_device
-                # ------------------------------------------------------
 
                 if ORIGINAL_DEFAULT_ROUTE_DETAILS:
                     safe_print(f"{BLUE}{T('del_orig_route')}{NC}")
@@ -1000,13 +962,6 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
         cleanup(is_failure=False)
         safe_print(f"\n{YELLOW}{T('conn_cancel')}{NC}")
         return None, False, None
-
-# --- RESTO DE FUNCIONES DE INTERFAZ (Sin cambios lógicos) ---
-# Se omiten por brevedad las funciones: check_connection_status, route_guardian, monitor_connection,
-# display_failure_banner, display_success_banner, get_user_choice, configure_display_screen,
-# configure_credentials_screen, select_language_screen, main_menu_screen
-# (Deben incluirse tal cual estaban en la v52)
-# A CONTINUACIÓN LAS AÑADO COMPLETAS PARA QUE EL ARCHIVO SEA FUNCIONAL
 
 def check_connection_status(expected_ip):
     if subprocess.run(["pgrep", "-x", "openvpn"], capture_output=True).returncode != 0:
@@ -1110,9 +1065,92 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                     if stability_metric <= 5: status_color = GREEN
                     elif stability_metric <= 20: status_color = YELLOW
                     else: status_color = RED
-                safe_print(f"  {T('lbl_route_corr')} {status_color}{ROUTE_CORRECTION_COUNT}{NC}")
+                
+                correction_line = f"  {T('lbl_route_corr')} {status_color}{ROUTE_CORRECTION_COUNT}{NC}"
+                if LAST_RECONNECTION_TIME:
+                    elapsed_seconds = int(time.time() - LAST_RECONNECTION_TIME)
+                    if elapsed_seconds < 60: time_str = f"{elapsed_seconds}s"
+                    elif elapsed_seconds < 3600:
+                        mins, secs = divmod(elapsed_seconds, 60)
+                        time_str = f"{mins}m {secs}s"
+                    else:
+                        hours, remainder = divmod(elapsed_seconds, 3600)
+                        mins, _ = divmod(remainder, 60)
+                        time_str = f"{hours}h {mins}m"
+                    correction_line += T("last_ago", time_str)
+                safe_print(correction_line)
+
                 if duration_seconds > 300:
                     safe_print(f"  {T('lbl_corr_rate')} {status_color}{stability_metric:.2f} /h{NC}")
+
+                if (ROUTE_CORRECTION_COUNT >= 4 and 
+                    duration_seconds > ANALYSIS_MIN_DURATION and 
+                    (time.time() - last_analysis_time) > ANALYSIS_INTERVAL and
+                    stability_metric > 5):
+                    try:
+                        script_dir = os.path.dirname(os.path.realpath(__file__))
+                        log_path = os.path.join(script_dir, RECONNECTION_LOG_FILE)
+                        timestamps = []
+                        with open(log_path, 'r') as f:
+                            for line in f:
+                                if line.startswith("Correction:"):
+                                    time_str = line.replace("Correction: ", "").strip()
+                                    timestamps.append(datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S'))
+                        
+                        filtered_timestamps = []
+                        if timestamps:
+                            ECO_THRESHOLD_SECONDS = 3
+                            filtered_timestamps.append(timestamps[0])
+                            for i in range(1, len(timestamps)):
+                                time_difference = (timestamps[i] - filtered_timestamps[-1]).total_seconds()
+                                if time_difference > ECO_THRESHOLD_SECONDS:
+                                    filtered_timestamps.append(timestamps[i])
+                        
+                        graph_line = ""
+                        if filtered_timestamps:
+                            graph_width = 40
+                            seconds_per_slot = duration_seconds / graph_width
+                            slots = ['.'] * graph_width
+                            first_connection_time = datetime.fromtimestamp(CONNECTION_START_TIME)
+                            for ts in filtered_timestamps:
+                                correction_seconds_from_start = (ts - first_connection_time).total_seconds()
+                                slot_index = int(correction_seconds_from_start / seconds_per_slot)
+                                if 0 <= slot_index < graph_width:
+                                    slots[slot_index] = f"{RED}X{GREEN}"
+                            graph_content = "".join(slots)
+                            graph_line = f"  {T('lbl_dist')} {GREEN}[{graph_content}]{NC}"
+
+                        pattern_analysis_line = ""
+                        if len(filtered_timestamps) > 1:
+                            intervals = [(filtered_timestamps[i] - filtered_timestamps[i-1]).total_seconds() for i in range(1, len(filtered_timestamps))]
+                            sorted_intervals = sorted(intervals)
+                            n = len(sorted_intervals)
+                            mid = n // 2
+                            median_seconds = (sorted_intervals[mid - 1] + sorted_intervals[mid]) / 2 if n % 2 == 0 else sorted_intervals[mid]
+                            tolerance_seconds = 30
+                            pattern_count = sum(1 for i in intervals if (median_seconds - tolerance_seconds) <= i <= (median_seconds + tolerance_seconds))
+                            pattern_percentage = (pattern_count / len(intervals)) * 100
+                            next_analysis_time_str = time.strftime('%H:%M', time.localtime(time.time() + ANALYSIS_INTERVAL))
+                            next_analysis_info = f" {YELLOW}(Next: {next_analysis_time_str}){NC}"
+                            if pattern_percentage > 50:
+                                pattern_minutes = median_seconds / 60
+                                line1 = f"  {T('lbl_pattern')} {GREEN}{T('ana_pattern_yes', int(pattern_percentage), pattern_minutes)}{NC}{next_analysis_info}"
+                                indent = " " * (L_WIDTH + 2)
+                                line2 = f"{indent}{GREEN}{T('ana_pattern_router')}{NC}"
+                                pattern_analysis_line = f"{line1}\n{line2}"
+                            else:
+                                pattern_analysis_line = f"  {T('lbl_pattern')} {YELLOW}{T('ana_pattern_no')}{NC}{next_analysis_info}"
+                        
+                        current_block = ""
+                        if graph_line: current_block += f"\n{graph_line}"
+                        if pattern_analysis_line: current_block += f"\n{pattern_analysis_line}"
+                        analysis_result_block = current_block
+                        last_analysis_time = time.time()
+                    except Exception:
+                        pass
+                
+                if duration_seconds > ANALYSIS_MIN_DURATION and analysis_result_block and stability_metric > 5:
+                    safe_print(analysis_result_block)
 
             next_check_time = time.time() + MONITOR_INTERVAL
             safe_print(f"\n  {T('lbl_check')} {time.strftime('%H:%M:%S', time.localtime(next_check_time))} {YELLOW}({MONITOR_INTERVAL}s){NC}\n")
@@ -1124,7 +1162,6 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 GUARDIAN_STOP_EVENT.set()
                 guardian_thread.join(timeout=2)
                 
-                # Al reconectar limpiamos firewall antiguo
                 if ACTIVE_FIREWALL_INTERFACE:
                     manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
 
@@ -1138,6 +1175,8 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 vpn_ip, forwarded_port = new_ip, new_port
                 ROUTE_CORRECTION_COUNT = 0
                 LAST_RECONNECTION_TIME = None
+                last_analysis_time = 0
+                analysis_result_block = None
                 send_critical_notification(T("notif_reconn_title"), T("notif_reconn_msg", forwarded_port))
                 display_success_banner(selected_location, initial_ip, vpn_ip, True, reconnection_count)
                 GUARDIAN_STOP_EVENT.clear()
@@ -1145,7 +1184,8 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 guardian_thread.start()
                 time.sleep(4)
                 continue
-
+            
+            safe_print(f"{YELLOW}{T('ctrl_c_exit')}{NC}", dynamic=True)
             time.sleep(MONITOR_INTERVAL)
     except KeyboardInterrupt:
         safe_print(f"\n{YELLOW}Stop signal.{NC}")
@@ -1353,8 +1393,6 @@ def main():
     
     threading.Thread(target=keep_sudo_alive, daemon=True).start()
 
-    # --- LIMPIEZA DE SEGURIDAD AL INICIO ---
-    # Por si hubo un cierre forzoso anterior, restaurar acceso DNS
     main_iface = detect_main_iface_nm()
     if main_iface:
         manage_dns_leak_firewall(main_iface, action="del")
@@ -1371,11 +1409,9 @@ def main():
         safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
     except Exception:
         safe_print(f"{YELLOW}{T('repair_attempt')}{NC}")
-        # Limpieza extra en intento de reparación
         if main_iface: manage_dns_leak_firewall(main_iface, action="del")
         try:
             safe_print(T('repair_restoring'))
-            # ... (Lógica de reparación existente)
             nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True).stdout
             for line in nmcli_output.strip().split('\n'):
                 parts = line.split(':')
@@ -1473,4 +1509,4 @@ if __name__ == "__main__":
             safe_print(f"\n{RED}Error: {e}{NC}")
             time.sleep(5)
             sys.exit(1)
-            
+
