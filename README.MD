@@ -1,4 +1,4 @@
-# Asistente de Conexión VPN (v4.5)
+# Asistente de Conexión VPN (v69)
 
 Un script en Python diseñado para gestionar conexiones OpenVPN de forma robusta, segura y desatendida. Ahora disponible en Español e Inglés.
 
