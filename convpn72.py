@@ -6,10 +6,13 @@ import sys
 import threading
 import re
 import json
-import base64
 import getpass
+import itertools
 from shutil import which
 from datetime import datetime
+
+# --- VERSIÓN DEL SCRIPT ---
+VERSION = "72"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -160,8 +163,8 @@ TRANSLATIONS = {
         "legend_3": "  >20:   Alerta (conexión inestable)",
         "menu_avail": "--- UBICACIONES DISPONIBLES ---",
         "menu_none": "No se encontraron ubicaciones.",
-        "menu_prompt": "Elige (1-{}), Intro para '{}', o 'M' Menú: ",
-        "menu_prompt_no_def": "Elige (1-{}), o 'M' Menú: ",
+        "menu_prompt": "Elige (1-{}), 'M' Menú, o Intro para Salir: ",
+        "menu_prompt_no_def": "Elige (1-{}), 'M' Menú, o Intro para Salir: ",
         "welcome_title": "Bienvenido al Asistente de Conexión VPN",
         "guide_title": "--- Guía Rápida ---",
         "guide_1": "1. Copia tus archivos .ovpn en esta carpeta.",
@@ -187,6 +190,7 @@ TRANSLATIONS = {
         "menu_opt_display": "Configurar Visualización de Nombres",
         "menu_opt_lang": "Cambiar Idioma",
         "menu_opt_creds": "Configurar Credenciales VPN",
+        "menu_opt_launcher": "Crear Lanzador de Escritorio",
         "menu_opt_back": "Volver",
         "cfg_fmt_q": "¿Qué formato prefieres?",
         "cfg_fmt_a": "A) [País] Ciudad (ej: [US] Miami)",
@@ -217,7 +221,9 @@ TRANSLATIONS = {
         "arch_apply": "Aplicando DNS nativas (resolvectl) y dominio '~.' a {}",
         "firewall_add": "FIREWALL: Bloqueando puerto 53 en {} (Anti-Leak).",
         "firewall_del": "FIREWALL: Reglas de bloqueo eliminadas en {}.",
-        "fw_fail": "Aviso: No se pudo gestionar firewall (iptables)."
+        "fw_fail": "Aviso: No se pudo gestionar firewall (iptables).",
+        "launcher_created": "Lanzador creado en: {}",
+        "launcher_error": "Error creando lanzador: {}"
     },
     "en": {
         "closing": "Script will close in 10 seconds...",
@@ -315,8 +321,8 @@ TRANSLATIONS = {
         "legend_3": "  >20:   Alert (unstable connection)",
         "menu_avail": "--- AVAILABLE LOCATIONS ---",
         "menu_none": "No locations found.",
-        "menu_prompt": "Choose (1-{}), Enter for '{}', or 'M' Menu: ",
-        "menu_prompt_no_def": "Choose (1-{}), or 'M' Menu: ",
+        "menu_prompt": "Choose (1-{}), 'M' Menu, or Enter to Exit: ",
+        "menu_prompt_no_def": "Choose (1-{}), 'M' Menu, or Enter to Exit: ",
         "welcome_title": "Welcome to the VPN Connection Assistant",
         "guide_title": "--- Quick Guide ---",
         "guide_1": "1. Copy your .ovpn files into this folder.",
@@ -342,6 +348,7 @@ TRANSLATIONS = {
         "menu_opt_display": "Configure Name Display",
         "menu_opt_lang": "Change Language",
         "menu_opt_creds": "Configure VPN Credentials",
+        "menu_opt_launcher": "Create Desktop Launcher",
         "menu_opt_back": "Back",
         "cfg_fmt_q": "Which format do you prefer?",
         "cfg_fmt_a": "A) [Country] City (e.g., [US] Miami)",
@@ -372,7 +379,9 @@ TRANSLATIONS = {
         "arch_apply": "Applying native DNS (resolvectl) and domain '~.' to {}",
         "firewall_add": "FIREWALL: Blocking port 53 on {} (Anti-Leak).",
         "firewall_del": "FIREWALL: Block rules removed on {}.",
-        "fw_fail": "Warning: Could not manage firewall (iptables)."
+        "fw_fail": "Warning: Could not manage firewall (iptables).",
+        "launcher_created": "Launcher created at: {}",
+        "launcher_error": "Error creating launcher: {}"
     }
 }
 
@@ -380,7 +389,46 @@ TRANSLATIONS = {
 class ConfigManager:
     def __init__(self, script_dir):
         self.config_path = os.path.join(script_dir, CONFIG_FILE)
+        self.machine_key = self.get_machine_key()
         self.config = self.load_config()
+
+    def get_machine_key(self):
+        """Obtiene una clave única basada en el hardware (Machine ID)."""
+        try:
+            # Intenta leer el machine-id estándar de Linux
+            if os.path.exists("/etc/machine-id"):
+                with open("/etc/machine-id", "r") as f:
+                    return f.read().strip()
+            elif os.path.exists("/var/lib/dbus/machine-id"):
+                with open("/var/lib/dbus/machine-id", "r") as f:
+                    return f.read().strip()
+        except Exception:
+            pass
+        # Fallback: Usar MAC address si no hay machine-id (menos seguro pero funcional)
+        import uuid
+        return str(uuid.getnode())
+
+    def xor_cipher(self, text, key):
+        """Cifrado/Descifrado XOR simple."""
+        return ''.join(chr(ord(c) ^ ord(k)) for c, k in zip(text, itertools.cycle(key)))
+
+    def encrypt(self, plaintext):
+        if not plaintext: return None
+        try:
+            # XOR y luego convertir a Hex para almacenamiento seguro en JSON
+            xor_result = self.xor_cipher(plaintext, self.machine_key)
+            return xor_result.encode('utf-8').hex()
+        except Exception:
+            return None
+
+    def decrypt(self, hex_text):
+        if not hex_text: return None
+        try:
+            # Hex a bytes, decodificar y luego XOR inverso
+            xor_text = bytes.fromhex(hex_text).decode('utf-8')
+            return self.xor_cipher(xor_text, self.machine_key)
+        except Exception:
+            return None
 
     def load_config(self):
         config = {"language": None, "last_choice": None}
@@ -423,19 +471,23 @@ class ConfigManager:
         self.save_config()
 
     def set_credentials(self, user, password):
-        self.config["vpn_user"] = base64.b64encode(user.encode()).decode()
-        self.config["vpn_pass"] = base64.b64encode(password.encode()).decode()
+        # Ahora usa el cifrado vinculado al hardware
+        self.config["vpn_user_enc"] = self.encrypt(user)
+        self.config["vpn_pass_enc"] = self.encrypt(password)
+        # Limpiamos claves antiguas si existen
+        if "vpn_user" in self.config: del self.config["vpn_user"]
+        if "vpn_pass" in self.config: del self.config["vpn_pass"]
         self.save_config()
         os.chmod(self.config_path, 0o600)
 
     def get_credentials(self):
-        u = self.config.get("vpn_user")
-        p = self.config.get("vpn_pass")
-        if u and p:
-            try:
-                return base64.b64decode(u).decode(), base64.b64decode(p).decode()
-            except Exception:
-                return None, None
+        # Solo lee formato nuevo (cifrado)
+        u_enc = self.config.get("vpn_user_enc")
+        p_enc = self.config.get("vpn_pass_enc")
+        
+        if u_enc and p_enc:
+            return self.decrypt(u_enc), self.decrypt(p_enc)
+        
         return None, None
 
 def T(key, *args):
@@ -505,6 +557,12 @@ def manage_dns_leak_firewall(interface, action="add"):
             ["sudo", "iptables", flag, "OUTPUT", "-o", interface, "-p", "tcp", "--dport", "53", "-j", "DROP"],
             check=False, stderr=subprocess.DEVNULL
         )
+        # --- IPV6 LEAK PROTECTION ---
+        subprocess.run(
+            ["sudo", "ip6tables", flag, "OUTPUT", "-o", interface, "-j", "DROP"],
+            check=False, stderr=subprocess.DEVNULL
+        )
+        # ----------------------------
         if action == "add":
             safe_print(f"{YELLOW}{T('firewall_add', interface)}{NC}")
         else:
@@ -736,6 +794,9 @@ def cleanup(is_failure=False):
                 safe_print(T('nm_step1'))
                 subprocess.run(["sudo", "nmcli", "connection", "modify", discovered_active_connection, "ipv4.never-default", "no"], check=True, capture_output=True)
                 subprocess.run(["sudo", "nmcli", "connection", "modify", discovered_active_connection, "ipv4.ignore-auto-routes", "no"], check=True, capture_output=True)
+                # --- IPV6 RESTORE ---
+                subprocess.run(["sudo", "nmcli", "connection", "modify", discovered_active_connection, "ipv6.method", "auto"], check=False, capture_output=True)
+                # --------------------
                 
                 safe_print(T('nm_step2'))
                 subprocess.run(["sudo", "nmcli", "connection", "up", discovered_active_connection], check=True, capture_output=True)
@@ -840,6 +901,9 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 safe_print(f"{T('neutralize_route', active_connection_name)}")
                 subprocess.run(["sudo", "nmcli", "connection", "modify", active_connection_name, "ipv4.never-default", "yes"], check=True, capture_output=True)
                 subprocess.run(["sudo", "nmcli", "connection", "modify", active_connection_name, "ipv4.ignore-auto-routes", "yes"], check=True, capture_output=True)
+                # --- IPV6 DISABLE ---
+                subprocess.run(["sudo", "nmcli", "connection", "modify", active_connection_name, "ipv6.method", "ignore"], check=False, capture_output=True)
+                # --------------------
                 CONNECTION_MODIFIED = True
                 safe_print(f"{GREEN}{T('profile_mod', active_connection_name)}{NC}")
         except Exception as e:
@@ -858,8 +922,10 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
             try:
                 with open(log_file_path, "wb") as log:
                     config_path = os.path.join(script_dir, selected_file)
-                    cmd = ["sudo", "openvpn", "--cd", script_dir, "--config", config_path, 
+                    # --- IPV6 BLOCK FLAG ADDED ---
+                    cmd = ["sudo", "openvpn", "--block-ipv6", "--cd", script_dir, "--config", config_path, 
                            "--auth-user-pass", "/dev/stdin", "--mssfix", "1450", "--mute-replay-warnings"]
+                    # -----------------------------
                     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=log, stderr=log)
                     try:
                         proc.stdin.write(auth_data)
@@ -1278,6 +1344,49 @@ def get_user_choice(locations, last_choice=None):
             time.sleep(5)
             sys.exit(0)
 
+def create_desktop_launcher():
+    clear_screen()
+    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}    {T('menu_opt_launcher')}")
+    safe_print(f"{BLUE}======================================={NC}")
+    
+    try:
+        script_path = os.path.realpath(sys.argv[0])
+        launcher_dir = os.path.expanduser("~/.local/share/applications")
+        if not os.path.exists(launcher_dir):
+            os.makedirs(launcher_dir)
+        
+        # CLEANUP: Delete existing convpn*.desktop files
+        for filename in os.listdir(launcher_dir):
+            if filename.startswith("convpn") and filename.endswith(".desktop"):
+                file_path = os.path.join(launcher_dir, filename)
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass # Ignore errors during cleanup
+
+        launcher_path = os.path.join(launcher_dir, "convpn_assistant.desktop")
+        
+        content = f"""[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Asistente VPN (v{VERSION})
+Comment=Gestor de conexiones OpenVPN automatizado
+Exec=python3 "{script_path}" --run-in-terminal
+Icon=network-vpn
+Terminal=false
+Categories=Network;ConsoleOnly;
+"""
+        with open(launcher_path, "w") as f:
+            f.write(content)
+        
+        os.chmod(launcher_path, 0o755)
+        safe_print(f"\n{GREEN}{T('launcher_created', launcher_path)}{NC}")
+    except Exception as e:
+        safe_print(f"\n{RED}{T('launcher_error', e)}{NC}")
+    
+    time.sleep(3)
+
 def configure_display_screen(config_mgr, script_dir):
     clear_screen()
     safe_print(f"{BLUE}======================================={NC}")
@@ -1366,13 +1475,16 @@ def main_menu_screen(config_mgr, script_dir):
         safe_print(f"  1) {T('menu_opt_display')}")
         safe_print(f"  2) {T('menu_opt_lang')}")
         safe_print(f"  3) {T('menu_opt_creds')}")
-        safe_print(f"  4) {T('menu_opt_back')}")
+        safe_print(f"  4) {T('menu_opt_launcher')}")
+        safe_print(f"  5) {T('menu_opt_back')}")
         try:
             sel = input("\n> ")
+            if not sel: break
             if sel == "1": configure_display_screen(config_mgr, script_dir)
             elif sel == "2": select_language_screen(config_mgr)
             elif sel == "3": configure_credentials_screen(config_mgr)
-            elif sel == "4": break
+            elif sel == "4": create_desktop_launcher()
+            elif sel == "5": break
         except KeyboardInterrupt: break
 
 def main():
@@ -1389,7 +1501,7 @@ def main():
 
     clear_screen()
     safe_print(f"{BLUE}====================================================={NC}")
-    safe_print(f"{BLUE}      {T('welcome_title')}      {NC}")
+    safe_print(f"{BLUE}      {T('welcome_title')} (v{VERSION})      {NC}")
     safe_print(f"{BLUE}====================================================={NC}")
     safe_print(f"\n{YELLOW}{T('guide_title')}{NC}")
     safe_print(f"\n{GREEN}{T('guide_1')}{NC}")
@@ -1439,6 +1551,9 @@ def main():
                 if len(parts) > 1 and parts[1].lower() != 'lo' and not parts[1].lower().startswith('tun'):
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv4.never-default", "no"], check=True, capture_output=True)
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv4.ignore-auto-routes", "no"], check=True, capture_output=True)
+                    # --- IPV6 REPAIR RESTORE ---
+                    subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv6.method", "auto"], check=True, capture_output=True)
+                    # ---------------------------
             safe_print(T('repair_reset'))
             subprocess.run(["sudo", "nmcli", "networking", "off"], check=True, capture_output=True)
             time.sleep(10)
@@ -1530,4 +1645,3 @@ if __name__ == "__main__":
             safe_print(f"\n{RED}Error: {e}{NC}")
             time.sleep(5)
             sys.exit(1)
-
