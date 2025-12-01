@@ -163,8 +163,8 @@ TRANSLATIONS = {
         "legend_3": "  >20:   Alerta (conexión inestable)",
         "menu_avail": "--- UBICACIONES DISPONIBLES ---",
         "menu_none": "No se encontraron ubicaciones.",
-        "menu_prompt": "Elige (1-{}), 'M' Menú, o Intro para Salir: ",
-        "menu_prompt_no_def": "Elige (1-{}), 'M' Menú, o Intro para Salir: ",
+        "menu_prompt": "Elige (1-{}), Intro para '{}', o 'M' Menú: ",
+        "menu_prompt_no_def": "Elige (1-{}), o 'M' Menú: ",
         "welcome_title": "Bienvenido al Asistente de Conexión VPN",
         "guide_title": "--- Guía Rápida ---",
         "guide_1": "1. Copia tus archivos .ovpn en esta carpeta.",
@@ -321,8 +321,8 @@ TRANSLATIONS = {
         "legend_3": "  >20:   Alert (unstable connection)",
         "menu_avail": "--- AVAILABLE LOCATIONS ---",
         "menu_none": "No locations found.",
-        "menu_prompt": "Choose (1-{}), 'M' Menu, or Enter to Exit: ",
-        "menu_prompt_no_def": "Choose (1-{}), 'M' Menu, or Enter to Exit: ",
+        "menu_prompt": "Choose (1-{}), Enter for '{}', or 'M' Menu: ",
+        "menu_prompt_no_def": "Choose (1-{}), or 'M' Menu: ",
         "welcome_title": "Welcome to the VPN Connection Assistant",
         "guide_title": "--- Quick Guide ---",
         "guide_1": "1. Copy your .ovpn files into this folder.",
@@ -1327,12 +1327,18 @@ def get_user_choice(locations, last_choice=None):
 
     safe_print("")
     safe_print(f"{RED}{T('ctrl_c_exit')}{NC}")
+    
+    # RESTAURADO: Prompt original que sugiere la última opción
     prompt = T("menu_prompt", len(locations), YELLOW + locations[last_choice - 1] + NC) if last_choice else T("menu_prompt_no_def", len(locations))
+    
     while True:
         try:
             choice_str = input(prompt)
             if choice_str.lower() == 'm': return 'MENU'
+            
+            # RESTAURADO: Si es Enter y hay last_choice, devuelve last_choice
             if not choice_str and last_choice: return last_choice
+            
             choice = int(choice_str)
             if 1 <= choice <= len(locations): return choice
             safe_print(f"{RED}Error.{NC}")
@@ -1351,28 +1357,33 @@ def create_desktop_launcher():
     safe_print(f"{BLUE}======================================={NC}")
     
     try:
+        # Rutas absolutas
         script_path = os.path.realpath(sys.argv[0])
+        script_dir = os.path.dirname(script_path)
+        python_exec = sys.executable
+        
         launcher_dir = os.path.expanduser("~/.local/share/applications")
         if not os.path.exists(launcher_dir):
             os.makedirs(launcher_dir)
         
-        # CLEANUP: Delete existing convpn*.desktop files
+        # Limpieza
         for filename in os.listdir(launcher_dir):
             if filename.startswith("convpn") and filename.endswith(".desktop"):
-                file_path = os.path.join(launcher_dir, filename)
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass # Ignore errors during cleanup
+                try: os.remove(os.path.join(launcher_dir, filename))
+                except: pass
 
         launcher_path = os.path.join(launcher_dir, "convpn_assistant.desktop")
         
+        # CORREGIDO: 
+        # 1. Path sin comillas (el estándar desktop lo prefiere así para la clave Path).
+        # 2. Exec SIN '--run-in-terminal'. Dejamos que el script invoque su propia terminal.
         content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name=Asistente VPN (v{VERSION})
 Comment=Gestor de conexiones OpenVPN automatizado
-Exec=python3 "{script_path}" --run-in-terminal
+Exec="{python_exec}" "{script_path}"
+Path={script_dir}
 Icon=network-vpn
 Terminal=false
 Categories=Network;ConsoleOnly;
@@ -1382,6 +1393,10 @@ Categories=Network;ConsoleOnly;
         
         os.chmod(launcher_path, 0o755)
         safe_print(f"\n{GREEN}{T('launcher_created', launcher_path)}{NC}")
+        
+        if which("update-desktop-database"):
+            subprocess.run(["update-desktop-database", launcher_dir], stderr=subprocess.DEVNULL)
+            
     except Exception as e:
         safe_print(f"\n{RED}{T('launcher_error', e)}{NC}")
     
