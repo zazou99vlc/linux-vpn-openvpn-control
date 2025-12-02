@@ -1503,6 +1503,20 @@ def main_menu_screen(config_mgr, script_dir):
         except KeyboardInterrupt: break
 
 def main():
+    # --- CONTROL DE INSTANCIA ÚNICA (GLOBAL) ---
+    try:
+        # Buscamos cualquier proceso que contenga "convpn" (v72, v73, etc.)
+        res = subprocess.run(["pgrep", "-f", "convpn"], capture_output=True, text=True)
+        pids = [p for p in res.stdout.strip().split('\n') if p]
+        
+        # Si hay más de 1 proceso (el que ya estaba + yo), me cierro
+        if len(pids) > 1:
+            safe_print(f"\n{RED}[!] ERROR: Ya hay una instancia de 'convpn' abierta.{NC}")
+            safe_print(f"\n{YELLOW}Cerrando para evitar conflictos.{NC}")
+            time.sleep(3)
+            sys.exit(1)
+    except Exception:
+        pass
     global CURRENT_LANG
     script_dir = os.path.dirname(os.path.realpath(__file__))
     config_mgr = ConfigManager(script_dir)
