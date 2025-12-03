@@ -8,11 +8,12 @@ import re
 import json
 import getpass
 import itertools
+import errno
 from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "72"
+VERSION = "87"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -31,6 +32,7 @@ BLUE = "\033[1;34m"
 YELLOW = "\033[1;33m"
 GREEN = "\033[1;32m"
 RED = "\033[1;31m"
+PINK = "\033[1;35m"
 NC = "\033[0m"
 
 LOG_FILE = "openvpn.log"
@@ -39,6 +41,7 @@ CONFIG_FILE = "config.json"
 DNS_BACKUP_FILE = "convpn_dns_backup.json"
 DNS_LOG_FILE = "convpn_dns.log"
 RECONNECTION_LOG_FILE = "reconnections.log"
+LOCK_FILE = "convpn.lock"
 
 CONNECTION_TIMEOUT = 20
 MONITOR_INTERVAL = 45
@@ -56,12 +59,20 @@ MAX_LOCATION_NAME_LENGTH = 15
 # --- VARIABLES GLOBALES ---
 ORIGINAL_DEFAULT_ROUTE_DETAILS = None
 ROUTE_CORRECTION_COUNT = 0
-CONNECTION_MODIFIED = False
 GUARDIAN_STOP_EVENT = threading.Event()
 CONNECTION_START_TIME = None
 LAST_RECONNECTION_TIME = None
 CURRENT_LANG = "es" 
 ACTIVE_FIREWALL_INTERFACE = None 
+
+# --- ESTADO DEL SISTEMA (STATE FLAGS) ---
+STATE = {
+    "NM_MODIFIED": False,      # ¿Se modificó el perfil .nmconnection?
+    "VPN_STARTED": False,      # ¿Se lanzó el proceso OpenVPN?
+    "FIREWALL_ACTIVE": False,  # ¿Hay reglas iptables puestas?
+    "DNS_APPLIED": False,      # ¿Se cambiaron DNS (NM o resolvectl)?
+    "BACKUP_CREATED": False    # ¿Existe el JSON de backup?
+}
 
 # --- DICCIONARIO DE IDIOMAS ---
 L_WIDTH = 22 
@@ -76,9 +87,13 @@ TRANSLATIONS = {
         "ctrl_c_exit": "Ctrl+C -> Salir",
         "final_exit": "Saliendo en 5 segundos...",
         "clean_start": "Iniciando secuencia de limpieza...",
-        "restoring_net": "Realizando restauración de red completa...",
-        "restoring_dns": "  > Restaurando configuración de DNS original (NM)...",
-        "restoring_nm": "  > Usando NetworkManager para restaurar la conexión '{}'...",
+        "clean_skip_net": "  > No se detectaron cambios pendientes en el registro.",
+        "clean_fw_del": "  > Eliminando reglas de firewall en '{}'...",
+        "clean_vpn_stop": "  > Deteniendo proceso OpenVPN...",
+        "clean_dns_rev": "  > Revirtiendo cambios de DNS (resolvectl)...",
+        "clean_nm_rest": "  > Restaurando perfil NetworkManager '{}'...",
+        "clean_files": "  > Borrando archivos temporales y bloqueo...",
+        "clean_kill_skip": "  > VPN no iniciada: No se requiere Corte de Emergencia.",
         "nm_step1": "    - Paso 1: Restaurando permisos del perfil...",
         "nm_step2": "    - Paso 2: Pidiendo a NetworkManager que reactive la conexión...",
         "nm_step3": "    - Paso 3: Esperando 5 segundos a que la red se estabilice...",
@@ -190,6 +205,7 @@ TRANSLATIONS = {
         "menu_opt_display": "Configurar Visualización de Nombres",
         "menu_opt_lang": "Cambiar Idioma",
         "menu_opt_creds": "Configurar Credenciales VPN",
+        "menu_opt_post": "Configurar Script Post-Conexión",
         "menu_opt_launcher": "Crear Lanzador de Escritorio",
         "menu_opt_back": "Volver",
         "cfg_fmt_q": "¿Qué formato prefieres?",
@@ -223,7 +239,18 @@ TRANSLATIONS = {
         "firewall_del": "FIREWALL: Reglas de bloqueo eliminadas en {}.",
         "fw_fail": "Aviso: No se pudo gestionar firewall (iptables).",
         "launcher_created": "Lanzador creado en: {}",
-        "launcher_error": "Error creando lanzador: {}"
+        "launcher_error": "Error creando lanzador: {}",
+        "cfg_post_title": "Configurar Script Post-Conexión",
+        "cfg_post_info": "Este script se ejecutará automáticamente tras conectar la VPN.\nDeja en blanco para desactivar.",
+        "cfg_post_warn_spaces": "AVISO: Se corregirán comillas y espacios automáticamente.\nPuedes usar nombre de archivo local.",
+        "cfg_post_current": "Configuración actual: ",
+        "cfg_post_none": "Desactivado",
+        "cfg_post_prompt": "Ruta o Nombre (Intro=Mantener, D=Desactivar): ",
+        "cfg_post_kept": "Configuración mantenida.",
+        "cfg_post_saved": "Script configurado: {}",
+        "cfg_post_removed": "Script post-conexión desactivado.",
+        "cfg_post_err": "El archivo no existe o no es ejecutable.",
+        "exec_post": "Ejecutando script post-conexión (Usuario: {})..."
     },
     "en": {
         "closing": "Script will close in 10 seconds...",
@@ -234,9 +261,13 @@ TRANSLATIONS = {
         "ctrl_c_exit": "Ctrl+C -> Exit",
         "final_exit": "Exiting in 5 seconds...",
         "clean_start": "Starting cleanup sequence...",
-        "restoring_net": "Performing full network restoration...",
-        "restoring_dns": "  > Restoring original DNS configuration (NM)...",
-        "restoring_nm": "  > Using NetworkManager to restore connection '{}'...",
+        "clean_skip_net": "  > No pending network changes detected.",
+        "clean_fw_del": "  > Removing firewall rules on '{}'...",
+        "clean_vpn_stop": "  > Stopping OpenVPN process...",
+        "clean_dns_rev": "  > Reverting DNS changes (resolvectl)...",
+        "clean_nm_rest": "  > Restoring NetworkManager profile '{}'...",
+        "clean_files": "  > Deleting temporary files and lock...",
+        "clean_kill_skip": "  > VPN not started: Emergency Cut not required.",
         "nm_step1": "    - Step 1: Restoring profile permissions...",
         "nm_step2": "    - Step 2: Requesting connection reactivation...",
         "nm_step3": "    - Step 3: Waiting 5 seconds for network to stabilize...",
@@ -348,6 +379,7 @@ TRANSLATIONS = {
         "menu_opt_display": "Configure Name Display",
         "menu_opt_lang": "Change Language",
         "menu_opt_creds": "Configure VPN Credentials",
+        "menu_opt_post": "Configure Post-Connection Script",
         "menu_opt_launcher": "Create Desktop Launcher",
         "menu_opt_back": "Back",
         "cfg_fmt_q": "Which format do you prefer?",
@@ -381,7 +413,18 @@ TRANSLATIONS = {
         "firewall_del": "FIREWALL: Block rules removed on {}.",
         "fw_fail": "Warning: Could not manage firewall (iptables).",
         "launcher_created": "Launcher created at: {}",
-        "launcher_error": "Error creating launcher: {}"
+        "launcher_error": "Error creating launcher: {}",
+        "cfg_post_title": "Configure Post-Connection Script",
+        "cfg_post_info": "This script will run automatically after VPN connection.\nLeave blank to disable.",
+        "cfg_post_warn_spaces": "WARNING: Quotes and spaces will be auto-corrected.\nYou can use local filename.",
+        "cfg_post_current": "Current setting: ",
+        "cfg_post_none": "Disabled",
+        "cfg_post_prompt": "Path or Name (Enter=Keep, D=Disable): ",
+        "cfg_post_kept": "Configuration kept.",
+        "cfg_post_saved": "Script configured: {}",
+        "cfg_post_removed": "Post-connection script disabled.",
+        "cfg_post_err": "File does not exist or is not executable.",
+        "exec_post": "Executing post-connection script (User: {})..."
     }
 }
 
@@ -395,7 +438,6 @@ class ConfigManager:
     def get_machine_key(self):
         """Obtiene una clave única basada en el hardware (Machine ID)."""
         try:
-            # Intenta leer el machine-id estándar de Linux
             if os.path.exists("/etc/machine-id"):
                 with open("/etc/machine-id", "r") as f:
                     return f.read().strip()
@@ -404,18 +446,15 @@ class ConfigManager:
                     return f.read().strip()
         except Exception:
             pass
-        # Fallback: Usar MAC address si no hay machine-id (menos seguro pero funcional)
         import uuid
         return str(uuid.getnode())
 
     def xor_cipher(self, text, key):
-        """Cifrado/Descifrado XOR simple."""
         return ''.join(chr(ord(c) ^ ord(k)) for c, k in zip(text, itertools.cycle(key)))
 
     def encrypt(self, plaintext):
         if not plaintext: return None
         try:
-            # XOR y luego convertir a Hex para almacenamiento seguro en JSON
             xor_result = self.xor_cipher(plaintext, self.machine_key)
             return xor_result.encode('utf-8').hex()
         except Exception:
@@ -424,7 +463,6 @@ class ConfigManager:
     def decrypt(self, hex_text):
         if not hex_text: return None
         try:
-            # Hex a bytes, decodificar y luego XOR inverso
             xor_text = bytes.fromhex(hex_text).decode('utf-8')
             return self.xor_cipher(xor_text, self.machine_key)
         except Exception:
@@ -471,24 +509,26 @@ class ConfigManager:
         self.save_config()
 
     def set_credentials(self, user, password):
-        # Ahora usa el cifrado vinculado al hardware
         self.config["vpn_user_enc"] = self.encrypt(user)
         self.config["vpn_pass_enc"] = self.encrypt(password)
-        # Limpiamos claves antiguas si existen
         if "vpn_user" in self.config: del self.config["vpn_user"]
         if "vpn_pass" in self.config: del self.config["vpn_pass"]
         self.save_config()
         os.chmod(self.config_path, 0o600)
 
     def get_credentials(self):
-        # Solo lee formato nuevo (cifrado)
         u_enc = self.config.get("vpn_user_enc")
         p_enc = self.config.get("vpn_pass_enc")
-        
         if u_enc and p_enc:
             return self.decrypt(u_enc), self.decrypt(p_enc)
-        
         return None, None
+    
+    def set_post_script(self, path):
+        self.config["post_script"] = path
+        self.save_config()
+
+    def get_post_script(self):
+        return self.config.get("post_script")
 
 def T(key, *args):
     lang_dict = TRANSLATIONS.get(CURRENT_LANG, TRANSLATIONS["es"])
@@ -499,6 +539,48 @@ def T(key, *args):
         except IndexError:
             return text
     return text
+
+# --- GESTIÓN DE LOCKFILE INTELIGENTE (JOURNALING) ---
+def get_lock_state():
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    lock_path = os.path.join(script_dir, LOCK_FILE)
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path, 'r') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+def create_lock_file():
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    lock_path = os.path.join(script_dir, LOCK_FILE)
+    initial_state = {
+        "pid": os.getpid(),
+        "actions": {}
+    }
+    try:
+        with open(lock_path, 'w') as f:
+            json.dump(initial_state, f)
+    except Exception:
+        pass
+
+def update_lock_state(key, value):
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    lock_path = os.path.join(script_dir, LOCK_FILE)
+    try:
+        state = {}
+        if os.path.exists(lock_path):
+            with open(lock_path, 'r') as f:
+                state = json.load(f)
+        
+        if "actions" not in state: state["actions"] = {}
+        state["actions"][key] = value
+        
+        with open(lock_path, 'w') as f:
+            json.dump(state, f)
+    except Exception:
+        pass
 
 # --- FUNCIONES DE RED, DNS Y FIREWALL ---
 
@@ -526,7 +608,6 @@ def detect_main_iface_nm():
     return None
 
 def get_all_physical_interfaces():
-    """Devuelve todas las interfaces físicas (wifi/ethernet) existan o no conexión activa."""
     interfaces = []
     try:
         out = subprocess.run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"], capture_output=True, text=True).stdout
@@ -557,12 +638,10 @@ def manage_dns_leak_firewall(interface, action="add"):
             ["sudo", "iptables", flag, "OUTPUT", "-o", interface, "-p", "tcp", "--dport", "53", "-j", "DROP"],
             check=False, stderr=subprocess.DEVNULL
         )
-        # --- IPV6 LEAK PROTECTION ---
         subprocess.run(
             ["sudo", "ip6tables", flag, "OUTPUT", "-o", interface, "-j", "DROP"],
             check=False, stderr=subprocess.DEVNULL
         )
-        # ----------------------------
         if action == "add":
             safe_print(f"{YELLOW}{T('firewall_add', interface)}{NC}")
         else:
@@ -584,6 +663,7 @@ def backup_original_dns(script_dir, dns_backup_path):
         with open(dns_backup_path, 'w') as f:
             json.dump(backup_data, f)
         log_dns_action(script_dir, "BACKUP", f"Saved to {dns_backup_path}")
+        update_lock_state("backup_created", True)
         safe_print(f"{GREEN}{T('dns_backup_ok')}{NC}")
     except Exception as e:
         safe_print(f"{RED}DNS Backup Error: {e}{NC}")
@@ -658,9 +738,8 @@ def prompt_reload_nm(script_dir):
 
 def restore_original_dns_from_backup(script_dir, dns_backup_path):
     if not os.path.exists(dns_backup_path): return
-    safe_print(f"{BLUE}{T('restoring_dns')}{NC}")
     try:
-        os.remove(dns_backup_path)
+        subprocess.run(["sudo", "rm", "-f", dns_backup_path], check=False, stderr=subprocess.DEVNULL)
         safe_print(f"{GREEN}{T('dns_restore_ok')}{NC}")
     except Exception as e:
         safe_print(f"{RED}Restore Error: {e}{NC}")
@@ -755,77 +834,88 @@ def parse_location_name(filename, config):
     else:
         return parsed_name
 
-def cleanup(is_failure=False):
-    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_MODIFIED, ACTIVE_FIREWALL_INTERFACE
-    safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
-
-    # Limpieza paranoica: Barrer todas las interfaces físicas
-    for iface in get_all_physical_interfaces():
-        manage_dns_leak_firewall(iface, action="del")
-        if is_systemd_resolved_active():
-            subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
+def cleanup(is_failure=False, state_override=None):
+    global ORIGINAL_DEFAULT_ROUTE_DETAILS, ACTIVE_FIREWALL_INTERFACE
     
-    ACTIVE_FIREWALL_INTERFACE = None
-
+    safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
     script_dir = os.path.dirname(os.path.realpath(__file__))
-    dns_backup_path = os.path.join(script_dir, DNS_BACKUP_FILE)
 
-    if CONNECTION_MODIFIED:
-        safe_print(f"{BLUE}{T('restoring_net')}{NC}")
+    # Usar estado pasado (recuperación) o leer del disco (cierre normal)
+    state_data = state_override
+    if state_data is None:
+        state_data = get_lock_state()
+    
+    actions = state_data.get("actions", {}) if state_data else {}
+
+    # 1. FIREWALL
+    fw_iface = actions.get("firewall_iface")
+    if fw_iface:
+        safe_print(f"{BLUE}{T('clean_fw_del', fw_iface)}{NC}")
+        manage_dns_leak_firewall(fw_iface, action="del")
+    
+    # Barrido de seguridad por si acaso
+    if ACTIVE_FIREWALL_INTERFACE and ACTIVE_FIREWALL_INTERFACE != fw_iface:
+        manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
+
+    # 2. VPN PROCESS
+    if actions.get("vpn_started"):
+        safe_print(f"{BLUE}{T('clean_vpn_stop')}{NC}")
         subprocess.run(["sudo", "killall", "-q", "openvpn"], capture_output=True)
         time.sleep(1)
 
-        restore_original_dns_from_backup(script_dir, dns_backup_path)
+    # 3. DNS & NETWORK
+    nm_conn = actions.get("nm_connection")
+    arch_dns = actions.get("arch_dns")
+    backup_created = actions.get("backup_created")
+    dns_applied = actions.get("dns_applied")
 
-        discovered_active_connection = None
-        try:
-            nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True, check=True).stdout
-            for line in nmcli_output.strip().split('\n'):
-                parts = line.split(':')
-                if len(parts) > 1 and parts[1].lower() not in ['lo'] and not parts[1].lower().startswith('tun'):
-                    discovered_active_connection = parts[0]
-                    break
-        except Exception:
-            pass
+    if nm_conn or arch_dns or backup_created or dns_applied:
+        
+        # A. Arch Linux / Systemd-resolved
+        if is_systemd_resolved_active():
+            safe_print(f"{BLUE}{T('clean_dns_rev')}{NC}")
+            if fw_iface:
+                subprocess.run(["sudo", "resolvectl", "revert", fw_iface], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "resolvectl", "flush-caches"], check=False, stderr=subprocess.DEVNULL)
 
-        if discovered_active_connection:
-            safe_print(f"{BLUE}{T('restoring_nm', discovered_active_connection)}{NC}")
+        # B. NetworkManager Restore
+        if nm_conn:
+            dns_backup_path = os.path.join(script_dir, DNS_BACKUP_FILE)
+            restore_original_dns_from_backup(script_dir, dns_backup_path)
+            
+            safe_print(f"{BLUE}{T('clean_nm_rest', nm_conn)}{NC}")
             try:
-                safe_print(T('nm_step1'))
-                subprocess.run(["sudo", "nmcli", "connection", "modify", discovered_active_connection, "ipv4.never-default", "no"], check=True, capture_output=True)
-                subprocess.run(["sudo", "nmcli", "connection", "modify", discovered_active_connection, "ipv4.ignore-auto-routes", "no"], check=True, capture_output=True)
-                # --- IPV6 RESTORE ---
-                subprocess.run(["sudo", "nmcli", "connection", "modify", discovered_active_connection, "ipv6.method", "auto"], check=False, capture_output=True)
-                # --------------------
+                subprocess.run(["sudo", "nmcli", "connection", "modify", nm_conn, "ipv4.never-default", "no"], check=True, capture_output=True)
+                subprocess.run(["sudo", "nmcli", "connection", "modify", nm_conn, "ipv4.ignore-auto-routes", "no"], check=True, capture_output=True)
+                subprocess.run(["sudo", "nmcli", "connection", "modify", nm_conn, "ipv6.method", "auto"], check=False, capture_output=True)
                 
-                safe_print(T('nm_step2'))
-                subprocess.run(["sudo", "nmcli", "connection", "up", discovered_active_connection], check=True, capture_output=True)
-                
-                safe_print(f"{BLUE}{T('nm_step3')}{NC}")
-                time.sleep(5)
-                final_route = get_current_default_route_details()
-                if final_route:
-                    safe_print(f"{GREEN}{T('nm_success')}{NC}")
-                    safe_print(f"{GREEN}      default {final_route}{NC}")
-                else:
-                    safe_print(f"{RED}{T('nm_fail_route')}{NC}")
-            except Exception as e:
-                safe_print(f"{RED}{T('nm_crit_error', e)}{NC}")
+                subprocess.run(["sudo", "nmcli", "connection", "up", nm_conn], check=True, capture_output=True)
+                safe_print(f"{GREEN}{T('nm_success')}{NC}")
+            except Exception:
                 safe_print(f"{YELLOW}{T('nm_manual')}{NC}")
+    else:
+        safe_print(f"{GREEN}{T('clean_skip_net')}{NC}")
 
+    # 4. KILL SWITCH
     if is_failure:
-        safe_print(f"{RED}{T('kill_switch_active')}{NC}")
-        subprocess.run(["sudo", "nmcli", "networking", "off"], capture_output=True, text=True)
-        send_critical_notification(T("notif_title_crit"), T("notif_msg_kill"))
+        if actions.get("vpn_started"): 
+            safe_print(f"{RED}{T('kill_switch_active')}{NC}")
+            subprocess.run(["sudo", "nmcli", "networking", "off"], capture_output=True, text=True)
+            send_critical_notification(T("notif_title_crit"), T("notif_msg_kill"))
+        else:
+            safe_print(f"{YELLOW}{T('clean_kill_skip')}{NC}")
 
-    for f in [LOG_FILE, PORT_FILE, RECONNECTION_LOG_FILE, DNS_LOG_FILE]:
+    # 5. ARCHIVOS
+    safe_print(f"{BLUE}{T('clean_files')}{NC}")
+    for f in [LOG_FILE, PORT_FILE, RECONNECTION_LOG_FILE, DNS_LOG_FILE, DNS_BACKUP_FILE, LOCK_FILE]:
         p = os.path.join(script_dir, f)
-        if os.path.exists(p): os.remove(p)
-    
-    CONNECTION_MODIFIED = False
-    
+        if os.path.exists(p): 
+            try: os.remove(p)
+            except: subprocess.run(["sudo", "rm", "-f", p], check=False, stderr=subprocess.DEVNULL)
+
+    ACTIVE_FIREWALL_INTERFACE = None
     safe_print(f"\n{GREEN}{T('clean_complete')}{NC}")
-    if is_failure:
+    if is_failure and actions.get("vpn_started"): 
         safe_print(f"{YELLOW}{T('net_disabled')}{NC}")
         safe_print(f"{T('kill_switch_recover')}")
 
@@ -860,7 +950,7 @@ def check_and_set_default_route():
     return True
 
 def establish_connection(selected_file, selected_location, initial_ip, is_reconnecting=False):
-    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_MODIFIED, CONNECTION_START_TIME, ACTIVE_FIREWALL_INTERFACE
+    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_START_TIME, ACTIVE_FIREWALL_INTERFACE
     try:
         CONNECTION_START_TIME = time.time()
         start_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(CONNECTION_START_TIME))
@@ -901,10 +991,9 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 safe_print(f"{T('neutralize_route', active_connection_name)}")
                 subprocess.run(["sudo", "nmcli", "connection", "modify", active_connection_name, "ipv4.never-default", "yes"], check=True, capture_output=True)
                 subprocess.run(["sudo", "nmcli", "connection", "modify", active_connection_name, "ipv4.ignore-auto-routes", "yes"], check=True, capture_output=True)
-                # --- IPV6 DISABLE ---
                 subprocess.run(["sudo", "nmcli", "connection", "modify", active_connection_name, "ipv6.method", "ignore"], check=False, capture_output=True)
-                # --------------------
-                CONNECTION_MODIFIED = True
+                
+                update_lock_state("nm_connection", active_connection_name)
                 safe_print(f"{GREEN}{T('profile_mod', active_connection_name)}{NC}")
         except Exception as e:
             safe_print(f"{RED}Error: {e}{NC}")
@@ -922,11 +1011,10 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
             try:
                 with open(log_file_path, "wb") as log:
                     config_path = os.path.join(script_dir, selected_file)
-                    # --- IPV6 BLOCK FLAG ADDED ---
                     cmd = ["sudo", "openvpn", "--block-ipv6", "--cd", script_dir, "--config", config_path, 
                            "--auth-user-pass", "/dev/stdin", "--mssfix", "1450", "--mute-replay-warnings"]
-                    # -----------------------------
                     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=log, stderr=log)
+                    update_lock_state("vpn_started", True)
                     try:
                         proc.stdin.write(auth_data)
                         proc.stdin.close()
@@ -951,8 +1039,10 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 
                 tun_iface = detect_tun_interface_from_log(script_dir)
                 if tun_iface:
+                    update_lock_state("dns_applied", True)
                     if is_systemd_resolved_active():
                         safe_print(f"{YELLOW}{T('arch_detect')}{NC}")
+                        update_lock_state("arch_dns", True)
                         apply_dns_arch_native(tun_iface, vpn_dns, physical_device, script_dir)
                     else:
                         if not apply_dns_via_nm(tun_iface, vpn_dns, script_dir):
@@ -963,6 +1053,7 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 if physical_device:
                     manage_dns_leak_firewall(physical_device, action="add")
                     ACTIVE_FIREWALL_INTERFACE = physical_device
+                    update_lock_state("firewall_iface", physical_device)
 
                 if ORIGINAL_DEFAULT_ROUTE_DETAILS:
                     safe_print(f"{BLUE}{T('del_orig_route')}{NC}")
@@ -1216,7 +1307,7 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                                 line1 = f"  {T('lbl_pattern')} {GREEN}{T('ana_pattern_yes', int(pattern_percentage), pattern_minutes)}{NC}{next_analysis_info}"
                                 indent = " " * (L_WIDTH + 2)
                                 line2 = f"{indent}{GREEN}{T('ana_pattern_router')}{NC}"
-                                pattern_analysis_line = f"{line1}\n{line2}"
+                                pattern_analysis_line = f"{line1}\\n{line2}"
                             else:
                                 pattern_analysis_line = f"  {T('lbl_pattern')} {YELLOW}{T('ana_pattern_no')}{NC}{next_analysis_info}"
                         
@@ -1258,6 +1349,30 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 analysis_result_block = None
                 send_critical_notification(T("notif_reconn_title"), T("notif_reconn_msg", forwarded_port))
                 display_success_banner(selected_location, initial_ip, vpn_ip, True, reconnection_count)
+                
+                # --- EJECUCIÓN SCRIPT POST-CONEXIÓN (USER MODE) ---
+                post_script = config_mgr.get_post_script()
+                if post_script:
+                    # Auto-completado de ruta si es relativa
+                    if not os.path.isabs(post_script):
+                        script_dir = os.path.dirname(os.path.realpath(__file__))
+                        post_script = os.path.join(script_dir, post_script)
+
+                    if os.path.exists(post_script):
+                        sudo_user = os.environ.get('SUDO_USER')
+                        if sudo_user:
+                            safe_print(f"{BLUE}{T('exec_post', sudo_user)}{NC}")
+                            cmd = ['sudo', '-u', sudo_user, post_script]
+                        else:
+                            safe_print(f"{BLUE}{T('exec_post', 'root')}{NC}")
+                            cmd = [post_script]
+                        
+                        try:
+                            subprocess.Popen(cmd, start_new_session=True)
+                        except Exception as e:
+                            safe_print(f"{RED}Error: {e}{NC}")
+                # --------------------------------------
+
                 GUARDIAN_STOP_EVENT.clear()
                 guardian_thread = threading.Thread(target=route_guardian, daemon=True)
                 guardian_thread.start()
@@ -1459,6 +1574,57 @@ def configure_credentials_screen(config_mgr):
     except Exception: pass
     time.sleep(2)
 
+def configure_post_script_screen(config_mgr):
+    clear_screen()
+    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}    {T('cfg_post_title')}")
+    safe_print(f"{BLUE}======================================={NC}")
+    
+    current = config_mgr.get_post_script()
+    safe_print(f"{T('cfg_post_current')}", dynamic=True)
+    if current:
+        safe_print(f"{GREEN}{current}{NC}")
+    else:
+        safe_print(f"{YELLOW}{T('cfg_post_none')}{NC}")
+    
+    print("") # Separador
+    
+    safe_print(f"{YELLOW}{T('cfg_post_info')}{NC}")
+    safe_print(f"{PINK}{T('cfg_post_warn_spaces')}{NC}\n")
+    
+    path = input(T('cfg_post_prompt')).strip()
+    
+    # 1. LIMPIEZA (Comillas y Barras)
+    if len(path) >= 2 and ((path.startswith("'") and path.endswith("'")) or \
+                           (path.startswith('"') and path.endswith('"'))):
+        path = path[1:-1]
+    path = path.replace("\\ ", " ")
+
+    # 2. AUTO-COMPLETADO DE RUTA (La magia)
+    if path and not os.path.isabs(path):
+        # Si no es ruta absoluta, asumimos que está en la misma carpeta que este script
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        potential_path = os.path.join(script_dir, path)
+        if os.path.exists(potential_path):
+            path = potential_path
+
+    # 3. GUARDADO
+    if not path:
+        safe_print(f"\n{GREEN}{T('cfg_post_kept')}{NC}")
+    elif path.lower() == 'd':
+        config_mgr.set_post_script(None)
+        safe_print(f"\n{YELLOW}{T('cfg_post_removed')}{NC}")
+    else:
+        if os.path.exists(path) and os.access(path, os.X_OK):
+            config_mgr.set_post_script(path)
+            safe_print(f"\n{GREEN}{T('cfg_post_saved', path)}{NC}")
+        else:
+            safe_print(f"\n{RED}{T('cfg_post_err')}{NC}")
+            # Se guarda igual por si el usuario lo crea después
+            config_mgr.set_post_script(path)
+            
+    time.sleep(2)
+
 def select_language_screen(config_mgr):
     global CURRENT_LANG
     clear_screen()
@@ -1490,35 +1656,62 @@ def main_menu_screen(config_mgr, script_dir):
         safe_print(f"  1) {T('menu_opt_display')}")
         safe_print(f"  2) {T('menu_opt_lang')}")
         safe_print(f"  3) {T('menu_opt_creds')}")
-        safe_print(f"  4) {T('menu_opt_launcher')}")
-        safe_print(f"  5) {T('menu_opt_back')}")
+        safe_print(f"  4) {T('menu_opt_post')}")
+        safe_print(f"  5) {T('menu_opt_launcher')}")
+        safe_print(f"  6) {T('menu_opt_back')}")
         try:
             sel = input("\n> ")
             if not sel: break
             if sel == "1": configure_display_screen(config_mgr, script_dir)
             elif sel == "2": select_language_screen(config_mgr)
             elif sel == "3": configure_credentials_screen(config_mgr)
-            elif sel == "4": create_desktop_launcher()
-            elif sel == "5": break
+            elif sel == "4": configure_post_script_screen(config_mgr)
+            elif sel == "5": create_desktop_launcher()
+            elif sel == "6": break
         except KeyboardInterrupt: break
 
 def main():
-    # --- CONTROL DE INSTANCIA ÚNICA (GLOBAL) ---
-    try:
-        # Buscamos cualquier proceso que contenga "convpn" (v72, v73, etc.)
-        res = subprocess.run(["pgrep", "-f", "convpn"], capture_output=True, text=True)
-        pids = [p for p in res.stdout.strip().split('\n') if p]
-        
-        # Si hay más de 1 proceso (el que ya estaba + yo), me cierro
-        if len(pids) > 1:
-            safe_print(f"\n{RED}[!] ERROR: Ya hay una instancia de 'convpn' abierta.{NC}")
-            safe_print(f"\n{YELLOW}Cerrando para evitar conflictos.{NC}")
-            time.sleep(3)
-            sys.exit(1)
-    except Exception:
-        pass
     global CURRENT_LANG
     script_dir = os.path.dirname(os.path.realpath(__file__))
+    
+    # --- CONTROL DE INSTANCIA ÚNICA (LOCKFILE INTELIGENTE) ---
+    lock_path = os.path.join(script_dir, LOCK_FILE)
+    
+    # 1. Verificar si existe bloqueo previo
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path, 'r') as f:
+                lock_data = json.load(f)
+                old_pid = lock_data.get("pid")
+            
+            # Verificar si el proceso del PID sigue vivo
+            is_alive = False
+            if old_pid:
+                try:
+                    os.kill(old_pid, 0)
+                    is_alive = True
+                except OSError as e:
+                    if e.errno == errno.EPERM: is_alive = True
+                    elif e.errno == errno.ESRCH: is_alive = False
+                    else: is_alive = False
+
+            if is_alive:
+                safe_print(f"\n{PINK}[!] ERROR: Ya hay una instancia activa (PID {old_pid}).{NC}")
+                safe_print(f"{YELLOW}Si crees que es un error, borra el archivo '{LOCK_FILE}'.{NC}")
+                time.sleep(3)
+                sys.exit(1)
+            else:
+                # El proceso no existe (stale lock) -> CRASH DETECTADO
+                safe_print(f"{YELLOW}Detectado cierre incorrecto previo (PID {old_pid}). Limpiando sistema...{NC}")
+                cleanup(is_failure=False, state_override=lock_data)
+
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # 2. Crear nuevo bloqueo
+    create_lock_file()
+    # -------------------------------------------
+
     config_mgr = ConfigManager(script_dir)
     saved_lang = config_mgr.get_language()
     if saved_lang: CURRENT_LANG = saved_lang
@@ -1553,17 +1746,25 @@ def main():
         if is_systemd_resolved_active():
             subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
 
-    dns_backup_path = os.path.join(script_dir, DNS_BACKUP_FILE)
-    backup_original_dns(script_dir, dns_backup_path)
+    backup_original_dns(script_dir, os.path.join(script_dir, DNS_BACKUP_FILE))
 
     safe_print(f"{BLUE}{T('check_conn')}{NC}")
     initial_ip = None
-    try:
-        res = subprocess.run(["curl", "-s", "--max-time", str(CURL_TIMEOUT), "ifconfig.me"], capture_output=True, text=True, check=True)
-        if not is_valid_ip(res.stdout.strip()): raise ValueError("Invalid IP")
-        initial_ip = res.stdout.strip()
-        safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
-    except Exception:
+    
+    # --- VERIFICACIÓN DE CONECTIVIDAD (2 INTENTOS) ---
+    conn_success = False
+    for i in range(2):
+        try:
+            res = subprocess.run(["curl", "-s", "--max-time", str(CURL_TIMEOUT), "ifconfig.me"], capture_output=True, text=True, check=True)
+            if is_valid_ip(res.stdout.strip()):
+                initial_ip = res.stdout.strip()
+                conn_success = True
+                safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
+                break
+        except Exception:
+            if i == 0: time.sleep(5)
+
+    if not conn_success:
         safe_print(f"{YELLOW}{T('repair_attempt')}{NC}")
         
         # Limpieza paranoica también en reparación
@@ -1574,20 +1775,25 @@ def main():
 
         try:
             safe_print(T('repair_restoring'))
+            # Limpieza diferenciada Arch vs NM
+            if is_systemd_resolved_active():
+                 subprocess.run(["sudo", "resolvectl", "flush-caches"], check=False, stderr=subprocess.DEVNULL)
+            
+            # Limpieza NM (siempre útil)
             nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True).stdout
             for line in nmcli_output.strip().split('\n'):
                 parts = line.split(':')
                 if len(parts) > 1 and parts[1].lower() != 'lo' and not parts[1].lower().startswith('tun'):
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv4.never-default", "no"], check=True, capture_output=True)
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv4.ignore-auto-routes", "no"], check=True, capture_output=True)
-                    # --- IPV6 REPAIR RESTORE ---
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv6.method", "auto"], check=True, capture_output=True)
-                    # ---------------------------
+            
             safe_print(T('repair_reset'))
             subprocess.run(["sudo", "nmcli", "networking", "off"], check=True, capture_output=True)
             time.sleep(10)
             subprocess.run(["sudo", "nmcli", "networking", "on"], check=True, capture_output=True)
-            time.sleep(15)
+            time.sleep(20) # Aumentado a 20s
+            
             safe_print(T('repair_verify'))
             res = subprocess.run(["curl", "-s", "--max-time", str(CURL_TIMEOUT), "ifconfig.me"], capture_output=True, text=True, check=True)
             if not is_valid_ip(res.stdout.strip()): raise ValueError("Invalid IP")
@@ -1638,6 +1844,30 @@ def main():
             safe_print(f"{GREEN}OK. 10s...{NC}")
             time.sleep(10)
             display_success_banner(selected_location, initial_ip, new_ip)
+            
+            # --- EJECUCIÓN SCRIPT POST-CONEXIÓN (USER MODE) ---
+            post_script = config_mgr.get_post_script()
+            if post_script:
+                # Auto-completado de ruta si es relativa
+                if not os.path.isabs(post_script):
+                    script_dir = os.path.dirname(os.path.realpath(__file__))
+                    post_script = os.path.join(script_dir, post_script)
+
+                if os.path.exists(post_script):
+                    sudo_user = os.environ.get('SUDO_USER')
+                    if sudo_user:
+                        safe_print(f"{BLUE}{T('exec_post', sudo_user)}{NC}")
+                        cmd = ['sudo', '-u', sudo_user, post_script]
+                    else:
+                        safe_print(f"{BLUE}{T('exec_post', 'root')}{NC}")
+                        cmd = [post_script]
+                    
+                    try:
+                        subprocess.Popen(cmd, start_new_session=True)
+                    except Exception as e:
+                        safe_print(f"{RED}Error: {e}{NC}")
+            # --------------------------------------
+
             time.sleep(12)
             monitor_connection(selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
         else:
