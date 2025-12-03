@@ -1740,29 +1740,46 @@ def main():
     
     threading.Thread(target=keep_sudo_alive, daemon=True).start()
 
-    # --- LIMPIEZA PARANOICA AL INICIO ---
-    for iface in get_all_physical_interfaces():
-        manage_dns_leak_firewall(iface, action="del")
-        if is_systemd_resolved_active():
-            subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
-
-    backup_original_dns(script_dir, os.path.join(script_dir, DNS_BACKUP_FILE))
-
     safe_print(f"{BLUE}{T('check_conn')}{NC}")
     initial_ip = None
-    
-    # --- VERIFICACIÓN DE CONECTIVIDAD (2 INTENTOS) ---
     conn_success = False
-    for i in range(2):
+
+    # --- 1. SMART CHECK (INTENTO RÁPIDO) ---
+    # Si ya hay internet, NO tocamos nada (evita romper DNS en Arch)
+    for service in ["ifconfig.me", "icanhazip.com", "ipinfo.io/ip"]:
         try:
-            res = subprocess.run(["curl", "-s", "--max-time", str(CURL_TIMEOUT), "ifconfig.me"], capture_output=True, text=True, check=True)
-            if is_valid_ip(res.stdout.strip()):
+            res = subprocess.run(["curl", "-4", "-s", "--max-time", str(CURL_TIMEOUT), service], capture_output=True, text=True)
+            if res.returncode == 0 and is_valid_ip(res.stdout.strip()):
                 initial_ip = res.stdout.strip()
                 conn_success = True
                 safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
                 break
-        except Exception:
-            if i == 0: time.sleep(5)
+        except Exception: pass
+
+    # --- 2. SI FALLA: LIMPIEZA PARANOICA Y REINTENTOS ---
+    if not conn_success:
+        safe_print(f"{YELLOW}Limpiando configuración residual...{NC}")
+        for iface in get_all_physical_interfaces():
+            manage_dns_leak_firewall(iface, action="del")
+            if is_systemd_resolved_active():
+                subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
+        
+        time.sleep(5)
+
+        for i in range(3):
+            for service in ["ifconfig.me", "icanhazip.com", "ipinfo.io/ip"]:
+                try:
+                    res = subprocess.run(["curl", "-4", "-s", "--max-time", str(CURL_TIMEOUT), service], capture_output=True, text=True)
+                    if res.returncode == 0 and is_valid_ip(res.stdout.strip()):
+                        initial_ip = res.stdout.strip()
+                        conn_success = True
+                        safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
+                        break
+                except Exception: pass
+            if conn_success: break
+            if i < 2: time.sleep(4)
+
+    backup_original_dns(script_dir, os.path.join(script_dir, DNS_BACKUP_FILE))
 
     if not conn_success:
         safe_print(f"{YELLOW}{T('repair_attempt')}{NC}")
