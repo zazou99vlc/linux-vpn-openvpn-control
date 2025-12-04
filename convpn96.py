@@ -13,7 +13,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "95"
+VERSION = "96"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -1814,28 +1814,31 @@ def main():
             safe_print(f"{GREEN}OK. 10s...{NC}")
             time.sleep(10)
             display_success_banner(selected_location, initial_ip, new_ip)
-            
+############          
             post_script = config_mgr.get_post_script()
             if post_script:
+                # Resolver ruta si es relativa
                 if not os.path.isabs(post_script):
                     script_dir = os.path.dirname(os.path.realpath(__file__))
                     post_script = os.path.join(script_dir, post_script)
 
                 if os.path.exists(post_script):
-                    sudo_user = os.environ.get('SUDO_USER')
-                    if sudo_user:
-                        safe_print(f"{BLUE}{T('exec_post', sudo_user)}{NC}")
-                        cmd = ['sudo', '-u', sudo_user, post_script]
-                    else:
-                        safe_print(f"{BLUE}{T('exec_post', 'root')}{NC}")
-                        cmd = [post_script]
+                    # Obtenemos el usuario actual para mostrarlo en el log
+                    current_user = getpass.getuser()
+                    safe_print(f"{BLUE}{T('exec_post', current_user)}{NC}")
+                    
+                    # Ejecutamos el script directamente. Heredará el usuario actual.
+                    cmd = [post_script]
                     
                     try:
+                        # start_new_session=True permite que el script siga corriendo 
+                        # independientemente de este proceso padre.
                         subprocess.Popen(cmd, start_new_session=True)
                     except Exception as e:
                         safe_print(f"{RED}Error: {e}{NC}")
 
             time.sleep(12)
+############            
             monitor_connection(selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
         else:
             safe_print(f"\n{YELLOW}Menu 5s...{NC}")
