@@ -1,64 +1,137 @@
-# Asistente de Conexión VPN (v72)
+Asistente de Conexión VPN (v97)
 
-Un script en Python diseñado para gestionar conexiones OpenVPN de forma robusta, segura y desatendida. Ahora disponible en Español e Inglés.
+Un script en Python diseñado para gestionar conexiones OpenVPN de forma robusta, segura y totalmente desatendida. Disponible en Español e Inglés.
 
-Aunque la función de detección de puerto está optimizada para PrivateVPN, el resto del script funciona con cualquier proveedor que use archivos `.ovpn`.
+Este asistente automatiza todo el proceso de conexión, vigilancia y reparación de la red, ideal para mantener tu privacidad sin tener que vigilar la ventana de comandos. Aunque la detección de puerto está optimizada para la API de PrivateVPN, el resto de funcionalidades (conexión, kill-switch, DNS leak protection) funciona con cualquier proveedor que use archivos .ovpn.
+¿Qué hace este script?
+🛡️ Seguridad y Privacidad
 
-## ¿Qué hace este script?
+    Kill-Switch Inteligente: Si la VPN se cae y no puede reconectar, corta el tráfico de red inmediatamente para evitar exponer tu IP real.
 
-*   **Conexión "Roca":** Si la VPN se cae, intenta reconectar automáticamente.
-*   **Kill-Switch:** Si no puede reconectar, corta internet para que tu IP real nunca quede expuesta.
-*   **Blindaje IPv6:** Bloquea totalmente el tráfico IPv6 (Firewall + NetworkManager + OpenVPN) para evitar fugas de identidad por este protocolo.
-*   **Guardián de Rutas:** NetworkManager suele tener "puertas traseras" (fugas de rutas) que exponen tu IP. Este script vigila y cierra esas fugas al instante, obligando al tráfico a ir por la VPN.
-*   **Cifrado por Hardware:** Tus credenciales se guardan cifradas vinculadas al ID físico de tu máquina. Si alguien roba tu archivo de configuración, no podrá descifrar tu contraseña en otro PC.
-*   **Detección de Puerto:** (Solo PrivateVPN) Te dice qué puerto tienes abierto para configurar tu Torrent/P2P.
+    Blindaje IPv6: Bloquea totalmente el tráfico IPv6 (vía Firewall y NetworkManager) para evitar fugas de identidad, ya que muchas VPNs solo protegen IPv4.
 
-## Requisitos
+    Guardián de Rutas (Route Guardian): NetworkManager a veces intenta "escapar" de la VPN creando rutas por defecto inseguras. Este script vigila la tabla de enrutamiento cada segundo y elimina cualquier fuga al instante.
 
-Solo necesitas tener instaladas las herramientas básicas.
+    Gestión de DNS Anti-Leak: Configura automáticamente las DNS para evitar fugas, soportando tanto systemd-resolved (Arch Linux/Manjaro) como la gestión estándar de NetworkManager.
 
-**Sistema:**
-*   `openvpn`, `curl`, `sudo`, `iptables` (y `ip6tables`)
-*   `NetworkManager`: El script lo necesita precisamente para corregir su comportamiento y evitar fugas de datos.
+⚙️ Automatización y Estabilidad
 
-**Python:**
-*   `requests`, `ping3`
+    Conexión "Roca": Si la conexión se pierde, el script lo detecta, limpia el entorno y reconecta automáticamente.
 
-> **Instalación rápida en Arch/Manjaro:**
-> ```bash
-> sudo pacman -S openvpn curl python-requests
-> yay -S python-ping3
-> ```
+    Script Post-Conexión: Puedes configurar un script externo (opcional) que se ejecutará automáticamente cada vez que la VPN conecte o reconecte (ideal para actualizar puertos en Transmission/aMule).
 
-## Cómo usarlo (Instalación Limpia)
+    Análisis de Estabilidad: El script analiza si las desconexiones siguen un patrón (ej. renovación DHCP del router) y te avisa.
 
-Olvídate de editar archivos o scripts extraños. Ahora es mucho más fácil:
+    Cifrado por Hardware: Tus credenciales se guardan cifradas vinculadas al ID físico de tu máquina. Si copian tu archivo de configuración a otro PC, no funcionará.
 
-1.  Copia tus archivos `.ovpn` en la misma carpeta que este script.
-2.  Dale permisos de ejecución:
-    ```bash
-    chmod +x convpn72.py
-    ```
-3.  Ejecuta el script:
-    Puedes lanzarlo desde la terminal:
-    ```bash
-    ./convpn72.py
-    ```
-4.  **Configura tus datos:**
-    La primera vez que intentes conectar, el script te pedirá tu Usuario y Contraseña de la VPN.
-    *   Se guardarán cifrados y protegidos localmente.
-    *   Puedes cambiarlos cuando quieras desde el menú 'M'.
+🔌 Utilidades
 
-¡Y listo! El script se encarga de optimizar la conexión y mantenerla segura.
+    Detección de Puerto: (Solo PrivateVPN) Consulta la API para decirte qué puerto tienes abierto para P2P.
 
-## Menú de Opciones
+    Formateo de Nombres: Limpia los nombres de los archivos .ovpn para mostrarlos bonitos (ej: "[ES] Madrid" en lugar de "privatevpn-madrid-tun-443.ovpn").
 
-Al arrancar, verás tus ubicaciones disponibles. Además, puedes pulsar **'M'** para acceder a:
-*   **Configurar Visualización:** Elige cómo quieres que se vean los nombres de los archivos (ej: Solo Ciudad o País-Ciudad).
-*   **Cambiar Idioma:** Español / English.
-*   **Gestionar Credenciales:** Por si cambias de contraseña o usuario.
-*   **Crear Lanzador de Escritorio:** Crea un acceso directo en tu menú de aplicaciones para ejecutar la VPN sin abrir la terminal manualmente.
+Requisitos e Instalación
 
-## Nota sobre Seguridad
+El script está diseñado para ser ligero. Solo necesitas el script de Python y tus archivos .ovpn.
 
-Este script requiere permisos de administrador (`sudo`) para poder modificar las rutas de red, gestionar el firewall (iptables/ip6tables) y protegerte de fugas. Te pedirá la contraseña al iniciarse.
+1. Dependencias del Sistema:
+Necesitas herramientas básicas de red.
+
+    openvpn, curl, sudo, iptables, nmcli (NetworkManager).
+
+2. Librerías de Python:
+El script usa requests y ping3.
+
+    IMPORTANTE: Para ping3, se recomienda usar el gestor de paquetes de tu distribución en lugar de pip, para evitar conflictos de permisos con sudo.
+
+    Arch Linux / Manjaro:
+    code Bash
+
+    
+sudo pacman -S openvpn curl python-requests
+yay -S python-ping3
+
+  
+
+Debian / Ubuntu / Mint:
+code Bash
+
+    
+sudo apt install openvpn curl python3-requests python3-ping3
+
+  
+
+Fedora:
+code Bash
+
+        
+    sudo dnf install openvpn curl python3-requests python3-ping3
+
+      
+
+Cómo usarlo
+1. Preparación
+
+Crea una carpeta y mete dentro:
+
+    El script convpn97.py.
+
+    Tus archivos .ovpn (tantos como quieras).
+
+    (Opcional) Tu script .sh para actualizar puertos si lo usas.
+
+2. Ejecución
+
+No necesitas abrir una terminal manualmente si no quieres. El script es capaz de detectar si se está ejecutando en segundo plano y abrirá su propia ventana de terminal automáticamente.
+
+Puedes ejecutarlo de varias formas:
+
+    Opción A (Recomendada): Ejecuta python3 convpn97.py
+
+    Opción B: Dale permisos de ejecución (chmod +x convpn97.py) y haz doble clic sobre él o ejecútalo como ./convpn97.py.
+
+Al iniciar por primera vez, el asistente te guiará:
+
+    Idioma: Selecciona Español o Inglés.
+
+    Credenciales: Te pedirá tu usuario y contraseña de la VPN. Se guardarán cifrados localmente.
+
+    Formato de Nombres: Te preguntará cómo quieres ver la lista de servidores (ej. Si prefieres ver "País - Ciudad" o solo "Ciudad").
+
+3. Menú de Configuración (Tecla 'M')
+
+En la pantalla de selección de servidor, puedes pulsar 'M' para:
+
+    Configurar Script Post-Conexión: Vincula un script (bash/python) para que se ejecute tras conectar. Útil para actualizar clientes Torrent con el nuevo puerto.
+
+    Crear/Actualizar Lanzador: Crea un acceso directo en tu menú de aplicaciones.
+
+        Nota: Si descargas una nueva versión del script, usa esta opción de nuevo. El script detectará los lanzadores antiguos, los borrará y creará uno nuevo apuntando a la versión correcta.
+
+    Gestionar Credenciales: Por si cambias tu contraseña.
+
+    Cambiar Idioma y Visualización.
+
+Funcionamiento Detallado
+
+    Inicio: El script verifica tu conexión actual y tu IP real.
+
+    Conexión: Modifica temporalmente el perfil de red para evitar conflictos, lanza OpenVPN y espera a que se estabilice.
+
+    Verificación:
+
+        Hace ping (usando ping3) para verificar conectividad.
+
+        Comprueba que tu IP pública haya cambiado.
+
+        Verifica que la ruta por defecto apunte a la VPN.
+
+    Monitorización:
+
+        Entra en un bucle donde vigila la conexión constantemente.
+
+        Si detecta una caída o una fuga de ruta, activa el protocolo de reconexión.
+
+        Si reconecta con éxito, vuelve a lanzar tu script post-conexión (si lo tienes configurado).
+
+Nota: Este script requiere privilegios de sudo para modificar rutas y firewall. Te pedirá la contraseña al inicio y la mantendrá activa mientras el script funcione.
