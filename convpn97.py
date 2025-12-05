@@ -13,7 +13,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "96"
+VERSION = "97"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -207,7 +207,7 @@ TRANSLATIONS = {
         "menu_opt_creds": "Configurar Credenciales VPN",
         "menu_opt_post": "Configurar Script Post-Conexión",
         "menu_opt_launcher": "Crear Lanzador de Escritorio",
-        "menu_opt_back": "Volver",
+        "menu_opt_back": "Volver (Enter)",
         "cfg_fmt_q": "¿Qué formato prefieres?",
         "cfg_fmt_a": "A) [País] Ciudad (ej: [US] Miami)",
         "cfg_fmt_b": "B) Solo Ciudad (ej: Miami)",
@@ -381,7 +381,7 @@ TRANSLATIONS = {
         "menu_opt_creds": "Configure VPN Credentials",
         "menu_opt_post": "Configure Post-Connection Script",
         "menu_opt_launcher": "Create Desktop Launcher",
-        "menu_opt_back": "Back",
+        "menu_opt_back": "Back (Enter)",
         "cfg_fmt_q": "Which format do you prefer?",
         "cfg_fmt_a": "A) [Country] City (e.g., [US] Miami)",
         "cfg_fmt_b": "B) City Only (e.g., Miami)",
@@ -1370,6 +1370,10 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 analysis_result_block = None
                 send_critical_notification(T("notif_reconn_title"), T("notif_reconn_msg", forwarded_port))
                 display_success_banner(selected_location, initial_ip, vpn_ip, True, reconnection_count)
+                #### Ejecutar script post-conexión tras reconexión
+                script_dir = os.path.dirname(os.path.realpath(__file__))
+                run_post_script(ConfigManager(script_dir))
+                ####
                 GUARDIAN_STOP_EVENT.clear()
                 guardian_thread = threading.Thread(target=route_guardian, daemon=True)
                 guardian_thread.start()
@@ -1654,6 +1658,29 @@ def main_menu_screen(config_mgr, script_dir):
             elif sel == "5": create_desktop_launcher()
             elif sel == "6": break
         except KeyboardInterrupt: break
+        
+def run_post_script(config_mgr):
+    post_script = config_mgr.get_post_script()
+    if post_script:
+        # Resolver ruta si es relativa
+        if not os.path.isabs(post_script):
+            script_dir = os.path.dirname(os.path.realpath(__file__))
+            post_script = os.path.join(script_dir, post_script)
+
+        if os.path.exists(post_script):
+            # Obtenemos el usuario actual para mostrarlo en el log
+            current_user = getpass.getuser()
+            safe_print(f"{BLUE}{T('exec_post', current_user)}{NC}")
+            
+            # Ejecutamos el script directamente. Heredará el usuario actual.
+            cmd = [post_script]
+            
+            try:
+                # start_new_session=True permite que el script siga corriendo 
+                # independientemente de este proceso padre.
+                subprocess.Popen(cmd, start_new_session=True)
+            except Exception as e:
+                safe_print(f"{RED}Error: {e}{NC}")
 
 def main():
     global CURRENT_LANG
@@ -1815,27 +1842,8 @@ def main():
             time.sleep(10)
             display_success_banner(selected_location, initial_ip, new_ip)
 ############          
-            post_script = config_mgr.get_post_script()
-            if post_script:
-                # Resolver ruta si es relativa
-                if not os.path.isabs(post_script):
-                    script_dir = os.path.dirname(os.path.realpath(__file__))
-                    post_script = os.path.join(script_dir, post_script)
+            run_post_script(config_mgr)
 
-                if os.path.exists(post_script):
-                    # Obtenemos el usuario actual para mostrarlo en el log
-                    current_user = getpass.getuser()
-                    safe_print(f"{BLUE}{T('exec_post', current_user)}{NC}")
-                    
-                    # Ejecutamos el script directamente. Heredará el usuario actual.
-                    cmd = [post_script]
-                    
-                    try:
-                        # start_new_session=True permite que el script siga corriendo 
-                        # independientemente de este proceso padre.
-                        subprocess.Popen(cmd, start_new_session=True)
-                    except Exception as e:
-                        safe_print(f"{RED}Error: {e}{NC}")
 
             time.sleep(12)
 ############            
