@@ -127,7 +127,7 @@ else
     MESSAGE="No se pudo actualizar el puerto para ninguna aplicación."
     notify-send --urgency=critical "$TITLE" "$MESSAGE"
 fi
-
+sleep 30
 # --- RESTAURACIÓN DE PROCESOS ---
 if [ -s "$RUNNING_APPS_FILE" ]; then
     while read -r app_to_restore; do
