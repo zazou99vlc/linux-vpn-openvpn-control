@@ -958,6 +958,7 @@ def cleanup(is_failure=False, state_override=None):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS, ACTIVE_FIREWALL_INTERFACE
     
     safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
+    subprocess.run(["sudo", "killall", "-q", "openvpn"], check=False, stderr=subprocess.DEVNULL) # <--- MATA EL PROCESO ZOMBIE
     script_dir = os.path.dirname(os.path.realpath(__file__))
 
     state_data = state_override if state_override is not None else get_lock_state()
@@ -986,6 +987,7 @@ def cleanup(is_failure=False, state_override=None):
     if actions.get("resolv_locked"):
         safe_print(f"{BLUE}  > Desbloqueando /etc/resolv.conf...{NC}")
         subprocess.run(["sudo", "chattr", "-i", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
+        subprocess.run(["sudo", "mv", "/etc/resolv.conf.bak", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
 
     nm_conn = actions.get("nm_connection")
     arch_dns = actions.get("arch_dns")
@@ -1200,6 +1202,7 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                                 f.write(f"nameserver {dns}\n")
                         
                         # 3. Machacamos el original
+                        subprocess.run(["sudo", "mv", "/etc/resolv.conf", "/etc/resolv.conf.bak"], check=False, stderr=subprocess.DEVNULL)
                         subprocess.run(["sudo", "mv", temp_resolv, "/etc/resolv.conf"], check=True)
                         
                         # 4. ECHAMOS EL CANDADO (Inmutable)
