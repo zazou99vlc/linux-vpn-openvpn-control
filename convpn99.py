@@ -13,7 +13,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "97"
+VERSION = "99"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -81,6 +81,12 @@ TRANSLATIONS = {
     "es": {
         "closing": "El script se cerrará en 10 segundos...",
         "sudo_simple": "Se solicitará acceso de administrador (sudo) para ejecutar\nOpenVPN, firewall y gestionar la red.",
+        "ks_active": "Activando Kill Switch (Bloqueo estricto)...",
+        "ks_lan": "  > Excepción LAN: {}",
+        "ks_vpn": "  > Excepción VPN: {}:{} ({})",
+        "ks_tun": "  > Tráfico permitido en túnel: {}",
+        "ks_off": "Desactivando Kill Switch...",
+        "ks_fallback": "Aviso: No se pudieron leer detalles para Kill Switch estricto. Usando modo compatibilidad.",
         "sudo_error": "Error: No se pudo obtener privilegios de sudo.",
         "term_error": "No se detectó un terminal compatible.",
         "term_run": "Ejecuta: python3 '{}' --run-in-terminal",
@@ -259,6 +265,12 @@ TRANSLATIONS = {
         "term_error": "No compatible terminal found.",
         "term_run": "Run: python3 '{}' --run-in-terminal",
         "ctrl_c_exit": "Ctrl+C -> Exit",
+        "ks_active": "Activating Kill Switch (Strict Block)...",
+        "ks_lan": "  > LAN Exception: {}",
+        "ks_vpn": "  > VPN Exception: {}:{} ({})",
+        "ks_tun": "  > Tunnel traffic allowed: {}",
+        "ks_off": "Deactivating Kill Switch...",
+        "ks_fallback": "Warning: Could not read details for strict Kill Switch. Using compatibility mode.",
         "final_exit": "Exiting in 5 seconds...",
         "clean_start": "Starting cleanup sequence...",
         "clean_skip_net": "  > No pending network changes detected.",
@@ -625,7 +637,106 @@ def is_systemd_resolved_active():
         return True
     except Exception:
         return False
+#######
+def get_local_subnet(interface):
+    try:
+        # Obtiene la subred local (ej. 192.168.1.0/24) para permitir tráfico LAN
+        cmd = ["ip", "-o", "route", "show", "dev", interface, "scope", "link"]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        for line in res.stdout.strip().split('\n'):
+            if "proto kernel" in line and "src" in line:
+                return line.split()[0]
+    except Exception: pass
+    return None
+    
+def is_ufw_active():
+    # Comprueba si UFW está instalado y activo
+    if not which("ufw"): return False
+    try:
+        res = subprocess.run(["sudo", "ufw", "status"], capture_output=True, text=True)
+        return "Status: active" in res.stdout or "Estado: activo" in res.stdout
+    except Exception: return False    
 
+def extract_connection_details(script_dir):
+    # Extrae IP, Puerto y Protocolo REALES del log de OpenVPN (Flexible)
+    log_path = os.path.join(script_dir, LOG_FILE)
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', errors='ignore') as f:
+                content = f.read()
+                # Busca: UDPv4 link remote: [AF_INET]217.138.222.67:1194 (Ignorando texto intermedio)
+                match = re.search(r"(UDP|TCP).*?remote:.*?(?:\[.*?\])?\s*([0-9.]+):([0-9]+)", content, re.IGNORECASE)
+                if match:
+                    proto = "udp" if "udp" in match.group(1).lower() else "tcp"
+                    return match.group(2), match.group(3), proto
+        except Exception: pass
+    return None, None, None
+#######
+  
+def manage_kill_switch(phys_iface, tun_iface, action="add", vpn_ip=None, vpn_port=None, proto="udp", script_dir=None, restore_ufw=False):
+    if not phys_iface: return
+    ipt, ip6t = ["sudo", "iptables"], ["sudo", "ip6tables"]
+    
+    if action == "add":
+        # 1. Gestión de UFW (Evitar conflictos)
+        if is_ufw_active():
+            safe_print(f"{YELLOW}UFW activo detectado. Desactivando temporalmente para Kill Switch...{NC}")
+            subprocess.run(["sudo", "ufw", "disable"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if script_dir: update_lock_state("ufw_was_active", True)
+
+        safe_print(f"{YELLOW}{T('ks_active')}{NC}")
+        local_subnet = get_local_subnet(phys_iface)
+        
+        # 2. Limpieza y Políticas DROP
+        for cmd in [ipt, ip6t]:
+            subprocess.run(cmd + ["-F"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-X"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-P", "INPUT", "DROP"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-P", "FORWARD", "DROP"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-P", "OUTPUT", "DROP"], check=False, stderr=subprocess.DEVNULL)
+
+        # 3. Loopback
+        subprocess.run(ipt + ["-A", "INPUT", "-i", "lo", "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+        subprocess.run(ipt + ["-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+
+        # 4. LAN
+        if local_subnet:
+            safe_print(f"{BLUE}{T('ks_lan', local_subnet)}{NC}")
+            subprocess.run(ipt + ["-A", "INPUT", "-s", local_subnet, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(ipt + ["-A", "OUTPUT", "-d", local_subnet, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+
+        # 5. VPN
+        if vpn_ip and vpn_port:
+            safe_print(f"{BLUE}{T('ks_vpn', vpn_ip, vpn_port, proto)}{NC}")
+            subprocess.run(ipt + ["-A", "OUTPUT", "-o", phys_iface, "-d", vpn_ip, "-p", proto, "--dport", vpn_port, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(ipt + ["-A", "INPUT", "-i", phys_iface, "-s", vpn_ip, "-p", proto, "--sport", vpn_port, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+
+        # 6. Túnel
+        if tun_iface:
+            safe_print(f"{BLUE}{T('ks_tun', tun_iface)}{NC}")
+            subprocess.run(ipt + ["-A", "OUTPUT", "-o", tun_iface, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(ipt + ["-A", "INPUT", "-i", tun_iface, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+        
+        if script_dir:
+            update_lock_state("kill_switch_active", True)
+            update_lock_state("firewall_iface", phys_iface)
+
+    elif action == "del":
+        safe_print(f"{BLUE}{T('ks_off')}{NC}")
+        for cmd in [ipt, ip6t]:
+            subprocess.run(cmd + ["-P", "INPUT", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-P", "FORWARD", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-P", "OUTPUT", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-F"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(cmd + ["-X"], check=False, stderr=subprocess.DEVNULL)
+        
+        # Restaurar UFW si estaba activo
+        if restore_ufw:
+            safe_print(f"{BLUE}Restaurando UFW (Firewall del sistema)...{NC}")
+            # --force evita que pida confirmación "y/n"
+            subprocess.run(["sudo", "ufw", "--force", "enable"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+#######
 def manage_dns_leak_firewall(interface, action="add"):
     if not interface: return
     flag = "-I" if action == "add" else "-D"
@@ -782,7 +893,16 @@ def get_vpn_internal_ip():
         try:
             with open(log_path, 'r', errors='ignore') as f:
                 content = f.read()
-                match = re.search(r"net_addr_v4_add:\s+([\d\.]+)", content)
+                # 1. Patrón moderno (Linux/DCO)
+                match = re.search(r"net_addr_v4_add:\s+([0-9.]+)", content)
+                if match: return match.group(1)
+                
+                # 2. Patrón estándar PUSH_REPLY (ifconfig IP MASCARA)
+                match = re.search(r"ifconfig\s+([0-9.]+)\s+[0-9.]+", content)
+                if match: return match.group(1)
+                
+                # 3. Patrón legacy (ip addr add)
+                match = re.search(r"ip\s+addr\s+add\s+([0-9.]+)", content)
                 if match: return match.group(1)
         except Exception:
             pass
@@ -843,22 +963,30 @@ def cleanup(is_failure=False, state_override=None):
     state_data = state_override if state_override is not None else get_lock_state()
     actions = state_data.get("actions", {}) if state_data else {}
 
-    # 1. FIREWALL
+    # 1. FIREWALL & KILL SWITCH
     fw_iface = actions.get("firewall_iface")
+    ks_active = actions.get("kill_switch_active")
+    ufw_was_active = actions.get("ufw_was_active", False) # <--- Leemos el estado guardado
+
     if fw_iface:
-        safe_print(f"{BLUE}{T('clean_fw_del', fw_iface)}{NC}")
-        manage_dns_leak_firewall(fw_iface, action="del")
+        if ks_active:
+            # Pasamos el parámetro restore_ufw
+            manage_kill_switch(fw_iface, None, action="del", restore_ufw=ufw_was_active)
+        else:
+            safe_print(f"{BLUE}{T('clean_fw_del', fw_iface)}{NC}")
+            manage_dns_leak_firewall(fw_iface, action="del")
     
     if ACTIVE_FIREWALL_INTERFACE and ACTIVE_FIREWALL_INTERFACE != fw_iface:
-        manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
-
-    # 2. VPN PROCESS
-    if actions.get("vpn_started"):
-        safe_print(f"{BLUE}{T('clean_vpn_stop')}{NC}")
-        subprocess.run(["sudo", "killall", "-q", "openvpn"], capture_output=True)
-        time.sleep(1)
-
+        if ks_active:
+            manage_kill_switch(ACTIVE_FIREWALL_INTERFACE, None, action="del", restore_ufw=ufw_was_active)
+        else:
+            manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
+            
     # 3. DNS & NETWORK
+    if actions.get("resolv_locked"):
+        safe_print(f"{BLUE}  > Desbloqueando /etc/resolv.conf...{NC}")
+        subprocess.run(["sudo", "chattr", "-i", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
+
     nm_conn = actions.get("nm_connection")
     arch_dns = actions.get("arch_dns")
     backup_created = actions.get("backup_created")
@@ -1055,6 +1183,35 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 safe_print(f"{GREEN}{T('ovpn_started')}{NC}")
                 
                 vpn_dns = extract_vpn_dns_from_log(script_dir)
+                if vpn_dns and not is_systemd_resolved_active():
+                    safe_print(f"{YELLOW}Esperando a NetworkManager (2s)...{NC}")
+                    time.sleep(2)
+                    
+                    safe_print(f"{BLUE}  > Blindando /etc/resolv.conf (Inmutable)...{NC}")
+                    try:
+                        # 1. Aseguramos que el archivo no esté bloqueado de antes
+                        subprocess.run(["sudo", "chattr", "-i", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
+                        
+                        # 2. Creamos el archivo temporal
+                        temp_resolv = os.path.join(script_dir, "resolv.conf.tmp")
+                        with open(temp_resolv, "w") as f:
+                            f.write("# Generated by ConVPN (Kill Switch Active)\n")
+                            for dns in vpn_dns:
+                                f.write(f"nameserver {dns}\n")
+                        
+                        # 3. Machacamos el original
+                        subprocess.run(["sudo", "mv", temp_resolv, "/etc/resolv.conf"], check=True)
+                        
+                        # 4. ECHAMOS EL CANDADO (Inmutable)
+                        subprocess.run(["sudo", "chattr", "+i", "/etc/resolv.conf"], check=True)
+                        
+                        update_lock_state("resolv_locked", True)
+                        
+                    except Exception as e:
+                        safe_print(f"{RED}Error blindando DNS: {e}{NC}")
+                # ------------------------------------------
+                
+                
                 if not vpn_dns:
                     safe_print(f"{YELLOW}{T('dns_extract_fail')}{NC}")
                 
@@ -1072,9 +1229,18 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                     safe_print(f"{YELLOW}Warning: TUN interface not detected for DNS.{NC}")
                 
                 if physical_device:
-                    manage_dns_leak_firewall(physical_device, action="add")
-                    ACTIVE_FIREWALL_INTERFACE = physical_device
-                    update_lock_state("firewall_iface", physical_device)
+                    # --- NUEVO KILL SWITCH (Sobreseguridad) ---
+                    r_ip, r_port, r_proto = extract_connection_details(script_dir)
+                    
+                    if r_ip and r_port and tun_iface:
+                        manage_kill_switch(physical_device, tun_iface, action="add", vpn_ip=r_ip, vpn_port=r_port, proto=r_proto, script_dir=script_dir)
+                        ACTIVE_FIREWALL_INTERFACE = physical_device
+                    else:
+                        # Fallback
+                        safe_print(f"{RED}{T('ks_fallback')}{NC}")
+                        manage_dns_leak_firewall(physical_device, action="add")
+                        ACTIVE_FIREWALL_INTERFACE = physical_device
+                        update_lock_state("firewall_iface", physical_device)
 
                 if ORIGINAL_DEFAULT_ROUTE_DETAILS:
                     safe_print(f"{BLUE}{T('del_orig_route')}{NC}")
