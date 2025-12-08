@@ -13,7 +13,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "99"
+VERSION = "201"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -80,6 +80,7 @@ L_WIDTH = 22
 TRANSLATIONS = {
     "es": {
         "closing": "El script se cerrará en 10 segundos...",
+        "dns_abort": "Error Crítico: No se detectaron DNS en el log. Abortando conexión por seguridad.",
         "sudo_simple": "Se solicitará acceso de administrador (sudo) para ejecutar\nOpenVPN, firewall y gestionar la red.",
         "ks_active": "Activando Kill Switch (Bloqueo estricto)...",
         "ks_lan": "  > Excepción LAN: {}",
@@ -256,10 +257,15 @@ TRANSLATIONS = {
         "cfg_post_saved": "Script configurado: {}",
         "cfg_post_removed": "Script post-conexión desactivado.",
         "cfg_post_err": "El archivo no existe o no es ejecutable.",
+        "ks_fallback_error": "ERROR: No se pudo establecer Kill Switch estricto",
+        "ks_no_server_ip": "No se pudo obtener IP/Puerto del servidor VPN",
+        "ks_traffic_leak_warning": "Tu tráfico podría filtrarse si cae la VPN",
+        "ks_abort_connection": "Abortando conexión por seguridad",
         "exec_post": "Ejecutando script post-conexión (Usuario: {})..."
     },
     "en": {
         "closing": "Script will close in 10 seconds...",
+        "dns_abort": "Critical Error: No DNS detected in log. Aborting connection for security.",
         "sudo_simple": "Administrator access (sudo) will be requested to run\nOpenVPN, firewall and manage the network.",
         "sudo_error": "Error: Could not get sudo privileges.",
         "term_error": "No compatible terminal found.",
@@ -436,6 +442,10 @@ TRANSLATIONS = {
         "cfg_post_saved": "Script configured: {}",
         "cfg_post_removed": "Post-connection script disabled.",
         "cfg_post_err": "File does not exist or is not executable.",
+        "ks_fallback_error": "ERROR: Could not establish strict Kill Switch",
+        "ks_no_server_ip": "Could not obtain VPN server IP/Port",
+        "ks_traffic_leak_warning": "Your traffic could leak if VPN drops",
+        "ks_abort_connection": "Aborting connection for security",
         "exec_post": "Executing post-connection script (User: {})..."
     }
 }
@@ -808,7 +818,7 @@ def detect_tun_interface_from_log(script_dir):
 
 def apply_dns_arch_native(tun_iface, dns_list, phys_iface, script_dir):
     safe_print(f"{BLUE}{T('arch_apply', tun_iface)}{NC}")
-    final_dns = dns_list if dns_list else ["1.1.1.1", "1.0.0.1"]
+    final_dns = dns_list
     try:
         subprocess.run(["sudo", "resolvectl", "dns", tun_iface] + final_dns, check=True)
         subprocess.run(["sudo", "resolvectl", "domain", tun_iface, "~."], check=True)
@@ -824,7 +834,7 @@ def apply_dns_arch_native(tun_iface, dns_list, phys_iface, script_dir):
 
 def apply_dns_via_nm(tun_iface, dns_list, script_dir):
     if not tun_iface: return False
-    final_dns = dns_list if dns_list else ["1.1.1.1", "1.0.0.1"]
+    final_dns = dns_list
     dns_str = " ".join(final_dns)
     safe_print(f"{BLUE}Applying DNS to {tun_iface}: {dns_str}{NC}")
     try:
@@ -1014,7 +1024,7 @@ def cleanup(is_failure=False, state_override=None):
                 
                 val_v4_never = orig_state.get("ipv4.never-default", "no")
                 val_v4_ignore = orig_state.get("ipv4.ignore-auto-routes", "no")
-                val_v6_method = orig_state.get("ipv6.method", "auto")
+                val_v6_method = orig_state.get("ipv6.method", "disabled")
 
                 subprocess.run(["sudo", "nmcli", "connection", "modify", nm_conn, "ipv4.never-default", val_v4_never], check=True, capture_output=True)
                 subprocess.run(["sudo", "nmcli", "connection", "modify", nm_conn, "ipv4.ignore-auto-routes", val_v4_ignore], check=True, capture_output=True)
@@ -1130,7 +1140,7 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
 
                 orig_v4_never_def = get_nm_prop("ipv4.never-default") or "no"
                 orig_v4_ignore_auto = get_nm_prop("ipv4.ignore-auto-routes") or "no"
-                orig_v6_method = get_nm_prop("ipv6.method") or "auto"
+                orig_v6_method = get_nm_prop("ipv6.method") or "disabled"
 
                 nm_state_backup = {
                     "ipv4.never-default": orig_v4_never_def,
@@ -1185,7 +1195,16 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                 safe_print(f"{GREEN}{T('ovpn_started')}{NC}")
                 
                 vpn_dns = extract_vpn_dns_from_log(script_dir)
-                if vpn_dns and not is_systemd_resolved_active():
+                
+                # --- NUEVO BLOQUE DE SEGURIDAD ---
+                if not vpn_dns:
+                    safe_print(f"{RED}{T('dns_abort')}{NC}")
+                    time.sleep(8) # 8 segundos para que te dé tiempo a leerlo
+                    cleanup(is_failure=True)
+                    return None, False, None
+                # ---------------------------------
+
+                if not is_systemd_resolved_active(): # Ya no hace falta comprobar "if vpn_dns"
                     safe_print(f"{YELLOW}Esperando a NetworkManager (2s)...{NC}")
                     time.sleep(2)
                     
@@ -1239,12 +1258,27 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                         manage_kill_switch(physical_device, tun_iface, action="add", vpn_ip=r_ip, vpn_port=r_port, proto=r_proto, script_dir=script_dir)
                         ACTIVE_FIREWALL_INTERFACE = physical_device
                     else:
-                        # Fallback
-                        safe_print(f"{RED}{T('ks_fallback')}{NC}")
-                        manage_dns_leak_firewall(physical_device, action="add")
-                        ACTIVE_FIREWALL_INTERFACE = physical_device
-                        update_lock_state("firewall_iface", physical_device)
+                        ##Fallback
+                        #safe_print(f"{RED}{T('ks_fallback')}{NC}")
+                        #manage_dns_leak_firewall(physical_device, action="add")
+                        #ACTIVE_FIREWALL_INTERFACE = physical_device
+                        #update_lock_state("firewall_iface", physical_device)
+                        # NO FALLBACK - Abortar por seguridad
+                        safe_print(f"{RED}{'='*60}{NC}")
+                        safe_print(f"{RED}⚠️  {T('ks_fallback_error')} ⚠️{NC}")
+                        safe_print(f"{RED}{'='*60}{NC}")
+                        safe_print(f"{YELLOW}{T('ks_no_server_ip')}{NC}")
+                        safe_print(f"{YELLOW}{T('ks_traffic_leak_warning')}{NC}")
+                        safe_print(f"{RED}{T('ks_abort_connection')}{NC}\n")
 
+                        # Pausa para que el usuario pueda leer los mensajes
+                        time.sleep(5)  # Espera 5 segundos
+
+                        # Limpiar y salir
+                        if tun_iface:
+                            manage_dns_leak_firewall(physical_device, action="remove")
+
+                        return False  # O sys.exit(1) si prefieres salida total
                 if ORIGINAL_DEFAULT_ROUTE_DETAILS:
                     safe_print(f"{BLUE}{T('del_orig_route')}{NC}")
                     subprocess.run(["sudo", "ip", "route", "del", "default"], check=False, capture_output=True)
