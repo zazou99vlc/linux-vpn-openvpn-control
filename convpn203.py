@@ -13,7 +13,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "201"
+VERSION = "203"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -63,7 +63,6 @@ GUARDIAN_STOP_EVENT = threading.Event()
 CONNECTION_START_TIME = None
 LAST_RECONNECTION_TIME = None
 CURRENT_LANG = "es" 
-ACTIVE_FIREWALL_INTERFACE = None 
 
 # --- ESTADO DEL SISTEMA (STATE FLAGS) ---
 STATE = {
@@ -87,7 +86,6 @@ TRANSLATIONS = {
         "ks_vpn": "  > Excepción VPN: {}:{} ({})",
         "ks_tun": "  > Tráfico permitido en túnel: {}",
         "ks_off": "Desactivando Kill Switch...",
-        "ks_fallback": "Aviso: No se pudieron leer detalles para Kill Switch estricto. Usando modo compatibilidad.",
         "sudo_error": "Error: No se pudo obtener privilegios de sudo.",
         "term_error": "No se detectó un terminal compatible.",
         "term_run": "Ejecuta: python3 '{}' --run-in-terminal",
@@ -95,7 +93,6 @@ TRANSLATIONS = {
         "final_exit": "Saliendo en 5 segundos...",
         "clean_start": "Iniciando secuencia de limpieza...",
         "clean_skip_net": "  > No se detectaron cambios pendientes en el registro.",
-        "clean_fw_del": "  > Eliminando reglas de firewall en '{}'...",
         "clean_vpn_stop": "  > Deteniendo proceso OpenVPN...",
         "clean_dns_rev": "  > Revirtiendo cambios de DNS (resolvectl)...",
         "clean_nm_rest": "  > Restaurando perfil NetworkManager '{}'...",
@@ -134,9 +131,9 @@ TRANSLATIONS = {
         "attempt_fail": "Intento {} fallido.",
         "fail_banner_wait": "Fallo al iniciar OpenVPN. Resumen en 3 segundos...",
         "stabilizing": "Estabilizando y verificando red...",
-        "check_ping": "Verificando conectividad (ping 1.1.1.1)...",
-        "ping_ok": "Verificando conectividad (ping 1.1.1.1)... OK.",
-        "ping_fail": "Verificando conectividad (ping 1.1.1.1)... FALLO.",
+        "check_ping": "Verificando conectividad (ping 8.8.8.8)...",
+        "ping_ok": "Verificando conectividad (ping 8.8.8.8)... OK.",
+        "ping_fail": "Verificando conectividad (ping 8.8.8.8)... FALLO.",
         "check_ip": "Verificando IP (Intento {}/{})...",
         "dns_fallback": "Fallo de IP. Iniciando fallback de DNS...",
         "dns_temp": "DNS público añadido. Reintentando...",
@@ -233,7 +230,7 @@ TRANSLATIONS = {
         "cfg_creds_saved": "Credenciales guardadas y protegidas.",
         "cfg_creds_err": "Datos inválidos. No se guardó nada.",
         "err_no_creds": "Error: No hay credenciales configuradas.",
-        "dns_extract_fail": "No se encontraron DNS. Usando Fallback (1.1.1.1).",
+        "dns_extract_fail": "No se encontraron DNS. Usando Fallback (8.8.8.8).",
         "dns_prompt_opt": "1) Reintentar  2) Abortar: ",
         "dns_apply_success": "DNS aplicadas vía NetworkManager a {}: {}",
         "dns_apply_fail": "Fallo al aplicar DNS vía NM.",
@@ -242,9 +239,6 @@ TRANSLATIONS = {
         "dns_restore_ok": "DNS restauradas desde backup JSON.",
         "arch_detect": "Sistema con systemd-resolved detectado (Arch mode).",
         "arch_apply": "Aplicando DNS nativas (resolvectl) y dominio '~.' a {}",
-        "firewall_add": "FIREWALL: Bloqueando puerto 53 en {} (Anti-Leak).",
-        "firewall_del": "FIREWALL: Reglas de bloqueo eliminadas en {}.",
-        "fw_fail": "Aviso: No se pudo gestionar firewall (iptables).",
         "launcher_created": "Lanzador creado en: {}",
         "launcher_error": "Error creando lanzador: {}",
         "cfg_post_title": "Configurar Script Post-Conexión",
@@ -276,11 +270,9 @@ TRANSLATIONS = {
         "ks_vpn": "  > VPN Exception: {}:{} ({})",
         "ks_tun": "  > Tunnel traffic allowed: {}",
         "ks_off": "Deactivating Kill Switch...",
-        "ks_fallback": "Warning: Could not read details for strict Kill Switch. Using compatibility mode.",
         "final_exit": "Exiting in 5 seconds...",
         "clean_start": "Starting cleanup sequence...",
         "clean_skip_net": "  > No pending network changes detected.",
-        "clean_fw_del": "  > Removing firewall rules on '{}'...",
         "clean_vpn_stop": "  > Stopping OpenVPN process...",
         "clean_dns_rev": "  > Reverting DNS changes (resolvectl)...",
         "clean_nm_rest": "  > Restoring NetworkManager profile '{}'...",
@@ -319,9 +311,9 @@ TRANSLATIONS = {
         "attempt_fail": "Attempt {} failed.",
         "fail_banner_wait": "Failed to start OpenVPN. Summary in 3 seconds...",
         "stabilizing": "Stabilizing and verifying network...",
-        "check_ping": "Verifying connectivity (ping 1.1.1.1)...",
-        "ping_ok": "Verifying connectivity (ping 1.1.1.1)... OK.",
-        "ping_fail": "Verifying connectivity (ping 1.1.1.1)... FAILED.",
+        "check_ping": "Verifying connectivity (ping 8.8.8.8)...",
+        "ping_ok": "Verifying connectivity (ping 8.8.8.8)... OK.",
+        "ping_fail": "Verifying connectivity (ping 8.8.8.8)... FAILED.",
         "check_ip": "Verifying IP (Attempt {}/{})...",
         "dns_fallback": "IP failed. Starting DNS fallback...",
         "dns_temp": "Public DNS added. Retrying...",
@@ -418,7 +410,7 @@ TRANSLATIONS = {
         "cfg_creds_saved": "Credentials saved and protected.",
         "cfg_creds_err": "Invalid data. Nothing saved.",
         "err_no_creds": "Error: No credentials configured.",
-        "dns_extract_fail": "No DNS found. Using Fallback (1.1.1.1).",
+        "dns_extract_fail": "No DNS found. Using Fallback (8.8.8.8).",
         "dns_prompt_opt": "1) Retry  2) Abort: ",
         "dns_apply_success": "DNS applied via NetworkManager to {}: {}",
         "dns_apply_fail": "Failed to apply DNS via NM.",
@@ -427,9 +419,6 @@ TRANSLATIONS = {
         "dns_restore_ok": "DNS restored from JSON backup.",
         "arch_detect": "Systemd-resolved detected (Arch mode).",
         "arch_apply": "Applying native DNS (resolvectl) and domain '~.' to {}",
-        "firewall_add": "FIREWALL: Blocking port 53 on {} (Anti-Leak).",
-        "firewall_del": "FIREWALL: Block rules removed on {}.",
-        "fw_fail": "Warning: Could not manage firewall (iptables).",
         "launcher_created": "Launcher created at: {}",
         "launcher_error": "Error creating launcher: {}",
         "cfg_post_title": "Configure Post-Connection Script",
@@ -628,18 +617,15 @@ def detect_main_iface_nm():
     except Exception:
         pass
     return None
-
-def get_all_physical_interfaces():
-    interfaces = []
-    try:
-        out = subprocess.run(["nmcli", "-t", "-f", "DEVICE,TYPE", "device"], capture_output=True, text=True).stdout
-        for line in out.strip().split('\n'):
-            if ":" in line:
-                dev, dtype = line.split(":")
-                if dtype in ["wifi", "ethernet"] and not dev.startswith("p2p"):
-                    interfaces.append(dev)
-    except Exception: pass
-    return interfaces
+    
+def get_cached_physical_interface(script_dir):
+    state = get_lock_state()
+    if state and "actions" in state:
+        cached = state["actions"].get("physical_interface")
+        if cached: return cached
+    iface = detect_main_iface_nm()
+    if iface: update_lock_state("physical_interface", iface)
+    return iface
 
 def is_systemd_resolved_active():
     try:
@@ -716,10 +702,12 @@ def manage_kill_switch(phys_iface, tun_iface, action="add", vpn_ip=None, vpn_por
             subprocess.run(ipt + ["-A", "OUTPUT", "-d", local_subnet, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
 
         # 5. VPN
-        if vpn_ip and vpn_port:
-            safe_print(f"{BLUE}{T('ks_vpn', vpn_ip, vpn_port, proto)}{NC}")
-            subprocess.run(ipt + ["-A", "OUTPUT", "-o", phys_iface, "-d", vpn_ip, "-p", proto, "--dport", vpn_port, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
-            subprocess.run(ipt + ["-A", "INPUT", "-i", phys_iface, "-s", vpn_ip, "-p", proto, "--sport", vpn_port, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+        if vpn_ip: #and vpn_port:
+            safe_print(f"{BLUE}{T('ks_vpn', vpn_ip, 'ANY', 'ALL')}{NC}")
+            # Salida permitida
+            subprocess.run(ipt + ["-A", "OUTPUT", "-o", phys_iface, "-d", vpn_ip, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
+            # Entrada permitida
+            subprocess.run(ipt + ["-A", "INPUT", "-i", phys_iface, "-s", vpn_ip, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
 
         # 6. Túnel
         if tun_iface:
@@ -746,33 +734,9 @@ def manage_kill_switch(phys_iface, tun_iface, action="add", vpn_ip=None, vpn_por
             # --force evita que pida confirmación "y/n"
             subprocess.run(["sudo", "ufw", "--force", "enable"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             
-#######
-def manage_dns_leak_firewall(interface, action="add"):
-    if not interface: return
-    flag = "-I" if action == "add" else "-D"
-    try:
-        subprocess.run(
-            ["sudo", "iptables", flag, "OUTPUT", "-o", interface, "-p", "udp", "--dport", "53", "-j", "DROP"],
-            check=False, stderr=subprocess.DEVNULL
-        )
-        subprocess.run(
-            ["sudo", "iptables", flag, "OUTPUT", "-o", interface, "-p", "tcp", "--dport", "53", "-j", "DROP"],
-            check=False, stderr=subprocess.DEVNULL
-        )
-        subprocess.run(
-            ["sudo", "ip6tables", flag, "OUTPUT", "-o", interface, "-j", "DROP"],
-            check=False, stderr=subprocess.DEVNULL
-        )
-        if action == "add":
-            safe_print(f"{YELLOW}{T('firewall_add', interface)}{NC}")
-        else:
-            safe_print(f"{BLUE}{T('firewall_del', interface)}{NC}")
-    except Exception:
-        safe_print(f"{RED}{T('fw_fail')}{NC}")
-
 def backup_original_dns(script_dir, dns_backup_path):
     backup_data = {"timestamp": datetime.now().isoformat(), "interfaces": {}}
-    main_iface = detect_main_iface_nm()
+    main_iface = get_cached_physical_interface(script_dir)
     if main_iface:
         try:
             res = subprocess.run(["nmcli", "-g", "IP4.DNS", "device", "show", main_iface], capture_output=True, text=True)
@@ -824,7 +788,7 @@ def apply_dns_arch_native(tun_iface, dns_list, phys_iface, script_dir):
         subprocess.run(["sudo", "resolvectl", "domain", tun_iface, "~."], check=True)
         subprocess.run(["sudo", "resolvectl", "default-route", tun_iface, "yes"], check=True)
         if phys_iface:
-             subprocess.run(["sudo", "resolvectl", "dns", phys_iface, ""], check=False, stderr=subprocess.DEVNULL)
+             #202#subprocess.run(["sudo", "resolvectl", "dns", phys_iface, ""], check=False, stderr=subprocess.DEVNULL)
              subprocess.run(["sudo", "resolvectl", "flush-caches"], check=False)
         log_dns_action(script_dir, "ARCH_APPLY", f"Interface: {tun_iface}, DNS: {final_dns}")
         return True
@@ -965,7 +929,7 @@ def parse_location_name(filename, config):
         return parsed_name
 
 def cleanup(is_failure=False, state_override=None):
-    global ORIGINAL_DEFAULT_ROUTE_DETAILS, ACTIVE_FIREWALL_INTERFACE
+    global ORIGINAL_DEFAULT_ROUTE_DETAILS
     
     safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
     subprocess.run(["sudo", "killall", "-q", "openvpn"], check=False, stderr=subprocess.DEVNULL) # <--- MATA EL PROCESO ZOMBIE
@@ -976,22 +940,14 @@ def cleanup(is_failure=False, state_override=None):
 
     # 1. FIREWALL & KILL SWITCH
     fw_iface = actions.get("firewall_iface")
-    ks_active = actions.get("kill_switch_active")
-    ufw_was_active = actions.get("ufw_was_active", False) # <--- Leemos el estado guardado
+    ufw_was_active = actions.get("ufw_was_active", False)
 
-    if fw_iface:
-        if ks_active:
-            # Pasamos el parámetro restore_ufw
-            manage_kill_switch(fw_iface, None, action="del", restore_ufw=ufw_was_active)
-        else:
-            safe_print(f"{BLUE}{T('clean_fw_del', fw_iface)}{NC}")
-            manage_dns_leak_firewall(fw_iface, action="del")
+    # Creamos un conjunto con las interfaces (elimina duplicados y nulos automáticamente)
+    cached_iface = get_cached_physical_interface(script_dir)
+    interfaces_to_clean = {fw_iface, cached_iface} - {None}
     
-    if ACTIVE_FIREWALL_INTERFACE and ACTIVE_FIREWALL_INTERFACE != fw_iface:
-        if ks_active:
-            manage_kill_switch(ACTIVE_FIREWALL_INTERFACE, None, action="del", restore_ufw=ufw_was_active)
-        else:
-            manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
+    for iface in interfaces_to_clean:
+        manage_kill_switch(iface, None, action="del", restore_ufw=ufw_was_active)
             
     # 3. DNS & NETWORK
     if actions.get("resolv_locked"):
@@ -1055,7 +1011,6 @@ def cleanup(is_failure=False, state_override=None):
             try: os.remove(p)
             except: subprocess.run(["sudo", "rm", "-f", p], check=False, stderr=subprocess.DEVNULL)
 
-    ACTIVE_FIREWALL_INTERFACE = None
     safe_print(f"\n{GREEN}{T('clean_complete')}{NC}")
     if is_failure and actions.get("vpn_started"): 
         safe_print(f"{YELLOW}{T('net_disabled')}{NC}")
@@ -1092,7 +1047,7 @@ def check_and_set_default_route():
     return True
 
 def establish_connection(selected_file, selected_location, initial_ip, is_reconnecting=False):
-    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_START_TIME, ACTIVE_FIREWALL_INTERFACE
+    global ORIGINAL_DEFAULT_ROUTE_DETAILS, CONNECTION_START_TIME
     try:
         CONNECTION_START_TIME = time.time()
         start_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(CONNECTION_START_TIME))
@@ -1119,7 +1074,7 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
         safe_print(f"\n{BLUE}{T('prep_net')}{NC}")
         
         active_connection_name = None
-        physical_device = detect_main_iface_nm()
+        physical_device = get_cached_physical_interface(script_dir)
         
         try:
             nmcli_output = subprocess.run(["nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active"], capture_output=True, text=True, check=True).stdout
@@ -1256,13 +1211,7 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                     
                     if r_ip and r_port and tun_iface:
                         manage_kill_switch(physical_device, tun_iface, action="add", vpn_ip=r_ip, vpn_port=r_port, proto=r_proto, script_dir=script_dir)
-                        ACTIVE_FIREWALL_INTERFACE = physical_device
                     else:
-                        ##Fallback
-                        #safe_print(f"{RED}{T('ks_fallback')}{NC}")
-                        #manage_dns_leak_firewall(physical_device, action="add")
-                        #ACTIVE_FIREWALL_INTERFACE = physical_device
-                        #update_lock_state("firewall_iface", physical_device)
                         # NO FALLBACK - Abortar por seguridad
                         safe_print(f"{RED}{'='*60}{NC}")
                         safe_print(f"{RED}⚠️  {T('ks_fallback_error')} ⚠️{NC}")
@@ -1272,14 +1221,14 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                         safe_print(f"{RED}{T('ks_abort_connection')}{NC}\n")
 
                         # Pausa para que el usuario pueda leer los mensajes
-                        time.sleep(5)  # Espera 5 segundos
+                        time.sleep(5)
 
-                        # Limpiar y salir
-                        if tun_iface:
-                            manage_dns_leak_firewall(physical_device, action="remove")
+                        # Limpiamos usando la función centralizada y salimos
+                        cleanup(is_failure=True)
+                        return None, False, None
 
-                        return False  # O sys.exit(1) si prefieres salida total
                 if ORIGINAL_DEFAULT_ROUTE_DETAILS:
+                                       
                     safe_print(f"{BLUE}{T('del_orig_route')}{NC}")
                     subprocess.run(["sudo", "ip", "route", "del", "default"], check=False, capture_output=True)
                 
@@ -1307,11 +1256,11 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
         
         safe_print(f"{YELLOW}{T('check_ping')}{NC}", dynamic=True)
         try:
-            ping3.ping("1.1.1.1", timeout=PING_TIMEOUT)
+            ping3.ping("8.8.8.8", timeout=PING_TIMEOUT)
             safe_print(f"{GREEN}{T('ping_ok')}{NC}")
         except Exception:
             safe_print(f"{YELLOW}FAIL.{NC}")
-            time.sleep(3)
+            time.sleep(10)
             safe_print(f"{RED}{T('ping_fail')}{NC}")
             display_failure_banner(T("fail_msg_tunnel"))
             cleanup(is_failure=is_reconnecting)
@@ -1411,7 +1360,7 @@ def route_guardian():
         GUARDIAN_STOP_EVENT.wait(current_interval)
 
 def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns_fallback_used, forwarded_port):
-    global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME, CONNECTION_START_TIME, ACTIVE_FIREWALL_INTERFACE
+    global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME, CONNECTION_START_TIME
     reconnection_count = 0
     last_analysis_time = 0
     analysis_result_block = None
@@ -1556,8 +1505,11 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
                 GUARDIAN_STOP_EVENT.set()
                 guardian_thread.join(timeout=2)
                 
-                if ACTIVE_FIREWALL_INTERFACE:
-                    manage_dns_leak_firewall(ACTIVE_FIREWALL_INTERFACE, action="del")
+                script_dir = os.path.dirname(os.path.realpath(__file__))
+                cached_iface = get_cached_physical_interface(script_dir)
+                
+                if cached_iface:
+                    manage_kill_switch(cached_iface, None, action="del")
 
                 cleanup(is_failure=False)
                 time.sleep(3)
@@ -1778,7 +1730,7 @@ def configure_post_script_screen(config_mgr):
     safe_print(f"{BLUE}======================================={NC}")
     
     current = config_mgr.get_post_script()
-    safe_print(f"{T('cfg_post_current')}", dynamic=True)
+    safe_print(f"{T('cfg_post_current')}")
     if current:
         safe_print(f"{GREEN}{current}{NC}")
     else:
@@ -1970,11 +1922,11 @@ def main():
     if not conn_success:
         safe_print(f"{YELLOW}{T('repair_attempt')}{NC}")
         
-        for iface in get_all_physical_interfaces():
-            manage_dns_leak_firewall(iface, action="del")
+        iface = get_cached_physical_interface(script_dir)
+        if iface:
+            manage_kill_switch(iface, None, action="del")
             if is_systemd_resolved_active():
                 subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
-
         try:
             safe_print(T('repair_restoring'))
             if is_systemd_resolved_active():
