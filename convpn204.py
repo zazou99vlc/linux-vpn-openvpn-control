@@ -772,12 +772,20 @@ def manage_kill_switch(phys_iface, tun_iface, action="add", vpn_ip=None, vpn_por
             subprocess.run(ipt + ["-A", "INPUT", "-i", tun_iface, "-j", "ACCEPT"], check=False, stderr=subprocess.DEVNULL)
         # 7. Bloqueo DoH (Anti-Fugas)
         if block_doh:
-            # Cloudflare, Google, Quad9
-            doh_ips = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112"]
-            safe_print(f"{BLUE}{T('ks_doh', 'Cloudflare/Google/Quad9')}{NC}")
-            for ip in doh_ips:
-                # Insertamos al principio (1) para que tenga prioridad sobre cualquier ACCEPT
+            # --- IPv4 ---
+            doh_ips_v4 = ["1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112"]
+            safe_print(f"{BLUE}{T('ks_doh', 'Cloudflare/Google/Quad9 (IPv4/IPv6)')}{NC}")
+            for ip in doh_ips_v4:
                 subprocess.run(ipt + ["-I", "OUTPUT", "1", "-d", ip, "-p", "tcp", "--dport", "443", "-j", "DROP"], check=False, stderr=subprocess.DEVNULL)
+            
+            # --- IPv6 ---
+            doh_ips_v6 = [
+                "2606:4700:4700::1111", "2606:4700:4700::1001", # Cloudflare
+                "2001:4860:4860::8888", "2001:4860:4860::8844", # Google
+                "2620:fe::fe", "2620:fe::9"                     # Quad9
+            ]
+            for ip in doh_ips_v6:
+                subprocess.run(ip6t + ["-I", "OUTPUT", "1", "-d", ip, "-p", "tcp", "--dport", "443", "-j", "DROP"], check=False, stderr=subprocess.DEVNULL)
             
             if script_dir:
                 update_lock_state("doh_blocked", True)
