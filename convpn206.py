@@ -13,7 +13,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "204"
+VERSION = "206"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -138,7 +138,6 @@ TRANSLATIONS = {
         "dns_fallback": "Fallo de IP. Iniciando fallback de DNS...",
         "dns_temp": "DNS público añadido. Reintentando...",
         "dns_restored": "DNS original restaurado.",
-        "dns_success": "¡Éxito! Conexión establecida con DNS de fallback.",
         "ip_fail_banner": "Fallo verificación IP. Resumen en 3 segundos...",
         "get_port": "Conexión verificada. Obteniendo puerto...",
         "port_saved": "Puerto {} guardado en '{}'.",
@@ -255,24 +254,16 @@ TRANSLATIONS = {
         "ks_no_server_ip": "No se pudo obtener IP/Puerto del servidor VPN",
         "ks_traffic_leak_warning": "Tu tráfico podría filtrarse si cae la VPN",
         "ks_abort_connection": "Abortando conexión por seguridad",
-        "menu_opt_doh": "Bloquear DoH (Anti-Fugas)",
-        "cfg_doh_title": "Configurar Bloqueo DoH",
-        "cfg_doh_info": "Bloquea IPs de Cloudflare/Google/Quad9 (HTTPS) para forzar\nel uso de DNS de la VPN y evitar fugas en navegadores.",
-        "cfg_doh_status": "Estado actual: ",
+        "lbl_locks": "Bloqueos:".ljust(L_WIDTH),
+        "menu_opt_locks": "Configurar Bloqueos (DoH / LAN)",
+        "cfg_locks_title": "Configurar Bloqueos de Seguridad",
+        "cfg_locks_prompt": "Elige opción para cambiar (1-2) o Intro para volver: ",
         "cfg_doh_on": "ACTIVADO (Bloqueo estricto)",
         "cfg_doh_off": "DESACTIVADO",
-        "cfg_doh_prompt": "¿Cambiar estado? (s/n): ",
-        "cfg_doh_saved": "Configuración DoH guardada: {}",
-        "ks_doh": "  > Bloqueando DoH (Anti-Fugas): {}",
-        "clean_doh": "  > Eliminando reglas de bloqueo DoH...",
-        "menu_opt_lan": "Bloquear LAN (Modo Paranoia)",
-        "cfg_lan_title": "Configurar Bloqueo de LAN",
-        "cfg_lan_info": "Impide la comunicación con equipos locales (Impresoras, NAS).\nRecomendado en redes públicas (Hoteles, Aeropuertos).",
-        "cfg_lan_status": "Estado actual: ",
         "cfg_lan_on": "ACTIVADO (Aislamiento Total)",
         "cfg_lan_off": "DESACTIVADO (Permitir LAN)",
-        "cfg_lan_prompt": "¿Cambiar estado? (s/n): ",
-        "cfg_lan_saved": "Configuración LAN guardada: {}",
+        "ks_doh": "  > Bloqueando DoH (Anti-Fugas): {}",
+        "clean_doh": "  > Eliminando reglas de bloqueo DoH...",
         "ks_lan_block": "  > LAN BLOQUEADA (Modo Paranoia activo).",
         "exec_post": "Ejecutando script post-conexión (Usuario: {})..."
     },
@@ -337,7 +328,6 @@ TRANSLATIONS = {
         "dns_fallback": "IP failed. Starting DNS fallback...",
         "dns_temp": "Public DNS added. Retrying...",
         "dns_restored": "Original DNS restored.",
-        "dns_success": "Success! Connection established via DNS fallback.",
         "ip_fail_banner": "IP verification failed. Summary in 3 seconds...",
         "get_port": "Connection verified. Getting port...",
         "port_saved": "Port {} saved to '{}'.",
@@ -454,29 +444,20 @@ TRANSLATIONS = {
         "ks_no_server_ip": "Could not obtain VPN server IP/Port",
         "ks_traffic_leak_warning": "Your traffic could leak if VPN drops",
         "ks_abort_connection": "Aborting connection for security",
-"menu_opt_doh": "Block DoH (Anti-Leak)",
-        "cfg_doh_title": "Configure DoH Blocking",
-        "cfg_doh_info": "Blocks Cloudflare/Google/Quad9 IPs (HTTPS) to force\nVPN DNS usage and prevent browser leaks.",
-        "cfg_doh_status": "Current status: ",
+        "lbl_locks": "Locks:".ljust(L_WIDTH),
+        "menu_opt_locks": "Configure Locks (DoH / LAN)",
+        "cfg_locks_title": "Configure Security Locks",
+        "cfg_locks_prompt": "Choose option to toggle (1-2) or Enter to back: ",
         "cfg_doh_on": "ENABLED (Strict Block)",
         "cfg_doh_off": "DISABLED",
-        "cfg_doh_prompt": "Change status? (y/n): ",
-        "cfg_doh_saved": "DoH setting saved: {}",
-        "ks_doh": "  > Blocking DoH (Anti-Leak): {}",
-        "clean_doh": "  > Removing DoH rules...",
-        "menu_opt_lan": "Block LAN (Paranoia Mode)",
-        "cfg_lan_title": "Configure LAN Blocking",
-        "cfg_lan_info": "Prevents communication with local devices (Printers, NAS).\nRecommended for public networks (Hotels, Airports).",
-        "cfg_lan_status": "Current status: ",
         "cfg_lan_on": "ENABLED (Total Isolation)",
         "cfg_lan_off": "DISABLED (Allow LAN)",
-        "cfg_lan_prompt": "Change status? (y/n): ",
-        "cfg_lan_saved": "LAN setting saved: {}",
+        "ks_doh": "  > Blocking DoH (Anti-Leak): {}",
+        "clean_doh": "  > Removing DoH rules...",
         "ks_lan_block": "  > LAN BLOCKED (Paranoia Mode active).",
         "exec_post": "Executing post-connection script (User: {})..."
     }
 }
-
 # --- GESTIÓN DE CONFIGURACIÓN E IDIOMA ---
 class ConfigManager:
     def __init__(self, script_dir):
@@ -1293,9 +1274,8 @@ def establish_connection(selected_file, selected_location, initial_ip, is_reconn
                     else:
                         # NO FALLBACK - Abortar por seguridad
                         # NO FALLBACK - Abortar por seguridad
-                        safe_print(f"{RED}{'='*60}{NC}")
                         safe_print(f"{RED}⚠️  {T('ks_fallback_error')} ⚠️{NC}")
-                        safe_print(f"{RED}{'='*60}{NC}")
+                        safe_print(f"{RED}{'-'*60}{NC}")
                         safe_print(f"{YELLOW}{T('ks_no_server_ip')}{NC}")
                         safe_print(f"{YELLOW}{T('ks_traffic_leak_warning')}{NC}")
                         safe_print(f"{RED}{T('ks_abort_connection')}{NC}\n")
@@ -1439,7 +1419,7 @@ def route_guardian():
                 current_interval = HIGH_ALERT_INTERVAL
         GUARDIAN_STOP_EVENT.wait(current_interval)
 
-def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns_fallback_used, forwarded_port):
+def monitor_connection(config_mgr, selected_file, selected_location, initial_ip, vpn_ip, dns_fallback_used, forwarded_port):
     global ROUTE_CORRECTION_COUNT, LAST_RECONNECTION_TIME, CONNECTION_START_TIME
     reconnection_count = 0
     last_analysis_time = 0
@@ -1453,10 +1433,14 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
     try:
         while True:
             clear_screen()
-            safe_print(f"{BLUE}======================================={NC}")
             safe_print(f"{BLUE}{T('mon_header')}{NC}")
-            safe_print(f"{BLUE}======================================={NC}")
-            safe_print(f"  {T('lbl_location')} {RED}{selected_location}{NC}")
+            doh_s = config_mgr.get_doh_blocking()
+            lan_s = config_mgr.get_lan_blocking()
+            c_doh = GREEN if doh_s else RED
+            c_lan = GREEN if lan_s else RED
+            safe_print(f"  {T('lbl_locks')} {c_doh}DoH{NC} {c_lan}LAN{NC}")
+            safe_print(f"{BLUE}{'-'*45}{NC}")
+            safe_print(f"  {T('lbl_location')} {YELLOW}{selected_location}{NC}")
             
             duration_seconds = 0
             if CONNECTION_START_TIME:
@@ -1628,17 +1612,15 @@ def monitor_connection(selected_file, selected_location, initial_ip, vpn_ip, dns
 
 def display_failure_banner(reason):
     clear_screen()
-    safe_print(f"{RED}======================================={NC}")
     safe_print(f"{RED}          {T('fail_title')}")
-    safe_print(f"{RED}======================================={NC}")
+    safe_print(f"{RED}{'-'*60}{NC}")
     safe_print(f"\n  {reason}")
 
 def display_success_banner(location, initial_ip, new_ip, is_reconnecting=False, count=0):
     w = 16
     clear_screen()
-    safe_print(f"{GREEN}======================================={NC}")
     safe_print(f"{GREEN}       {T('succ_title')}")
-    safe_print(f"{GREEN}======================================={NC}")
+    safe_print(f"{GREEN}{'-'*45}{NC}")
     safe_print(f"  {T('lbl_location').strip().ljust(w)} {YELLOW}{location}{NC}")
     if is_reconnecting: safe_print(f"  {T('lbl_reconn').strip().ljust(w)} {YELLOW}{count}{NC}")
     safe_print(f"  {T('succ_orig_ip').strip().ljust(w)} {YELLOW}{initial_ip}{NC}")
@@ -1702,9 +1684,8 @@ def get_user_choice(locations, last_choice=None):
 
 def create_desktop_launcher():
     clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
     safe_print(f"{BLUE}    {T('menu_opt_launcher')}")
-    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}{'-'*60}{NC}")
     
     try:
         script_path = os.path.realpath(sys.argv[0])
@@ -1749,9 +1730,8 @@ Categories=Network;ConsoleOnly;
 
 def configure_display_screen(config_mgr, script_dir):
     clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
     safe_print(f"{BLUE}    {T('menu_opt_display')}")
-    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}{'-'*60}{NC}")
     ovpn_files = sorted([f for f in os.listdir(script_dir) if f.endswith(".ovpn")])
     if not ovpn_files:
         safe_print(f"{RED}{T('cfg_err_empty')}{NC}")
@@ -1790,9 +1770,8 @@ def configure_display_screen(config_mgr, script_dir):
 
 def configure_credentials_screen(config_mgr):
     clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
     safe_print(f"{BLUE}    {T('cfg_creds_title')}")
-    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}{'-'*60}{NC}")
     safe_print(f"{YELLOW}{T('cfg_creds_info')}{NC}\n")
     try:
         user = input(T('cfg_user')).strip()
@@ -1806,9 +1785,8 @@ def configure_credentials_screen(config_mgr):
 
 def configure_post_script_screen(config_mgr):
     clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
     safe_print(f"{BLUE}    {T('cfg_post_title')}")
-    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}{'-'*60}{NC}")
     
     current = config_mgr.get_post_script()
     safe_print(f"{T('cfg_post_current')}")
@@ -1850,56 +1828,39 @@ def configure_post_script_screen(config_mgr):
             
     time.sleep(2)
     
-def configure_doh_screen(config_mgr):
-    clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
-    safe_print(f"{BLUE}    {T('cfg_doh_title')}")
-    safe_print(f"{BLUE}======================================={NC}")
-    safe_print(f"{YELLOW}{T('cfg_doh_info')}{NC}\n")
-    
-    current = config_mgr.get_doh_blocking()
-    status_text = T('cfg_doh_on') if current else T('cfg_doh_off')
-    color = GREEN if current else RED
-    safe_print(f"{T('cfg_doh_status')}{color}{status_text}{NC}\n")
-    
-    choice = input(T('cfg_doh_prompt')).lower()
-    if choice.startswith('s') or choice.startswith('y'):
-        new_state = not current
-        config_mgr.set_doh_blocking(new_state)
-        new_text = T('cfg_doh_on') if new_state else T('cfg_doh_off')
-        safe_print(f"\n{GREEN}{T('cfg_doh_saved', new_text)}{NC}")
-        time.sleep(2)
-    else:
-        time.sleep(1)
+def configure_locks_screen(config_mgr):
+    while True:
+        clear_screen()
+        safe_print(f"{BLUE}    {T('cfg_locks_title')}")
+        safe_print(f"{BLUE}{'-'*60}{NC}")
         
-def configure_lan_screen(config_mgr):
-    clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
-    safe_print(f"{BLUE}    {T('cfg_lan_title')}")
-    safe_print(f"{BLUE}======================================={NC}")
-    safe_print(f"{YELLOW}{T('cfg_lan_info')}{NC}\n")
-    
-    current = config_mgr.get_lan_blocking()
-    status_text = T('cfg_lan_on') if current else T('cfg_lan_off')
-    color = GREEN if current else RED
-    safe_print(f"{T('cfg_lan_status')}{color}{status_text}{NC}\n")
-    
-    choice = input(T('cfg_lan_prompt')).lower()
-    if choice.startswith('s') or choice.startswith('y'):
-        new_state = not current
-        config_mgr.set_lan_blocking(new_state)
-        new_text = T('cfg_lan_on') if new_state else T('cfg_lan_off')
-        safe_print(f"\n{GREEN}{T('cfg_lan_saved', new_text)}{NC}")
-        time.sleep(2)
-    else:
-        time.sleep(1)
+        doh_state = config_mgr.get_doh_blocking()
+        lan_state = config_mgr.get_lan_blocking()
+        
+        # Verde = Activado (Protegido), Rojo = Desactivado
+        c_doh = GREEN if doh_state else RED
+        txt_doh = T('cfg_doh_on') if doh_state else T('cfg_doh_off')
+        
+        c_lan = GREEN if lan_state else RED
+        txt_lan = T('cfg_lan_on') if lan_state else T('cfg_lan_off')
+        
+        safe_print(f"  1) DoH (Anti-Fugas):   {c_doh}{txt_doh}{NC}")
+        safe_print(f"  2) LAN (Aislamiento):  {c_lan}{txt_lan}{NC}")
+        
+        sel = input(f"\n{T('cfg_locks_prompt')}")
+        
+        if not sel: break
+        
+        if sel == "1":
+            config_mgr.set_doh_blocking(not doh_state)
+        elif sel == "2":
+            config_mgr.set_lan_blocking(not lan_state)
 
 def select_language_screen(config_mgr):
     global CURRENT_LANG
     clear_screen()
-    safe_print(f"{BLUE}======================================={NC}")
     safe_print(f"{BLUE}    {T('select_lang')}")
-    safe_print(f"{BLUE}======================================={NC}")
+    safe_print(f"{BLUE}{'-'*60}{NC}")
     safe_print("  1) Español")
     safe_print("  2) English")
     while True:
@@ -1919,17 +1880,15 @@ def select_language_screen(config_mgr):
 def main_menu_screen(config_mgr, script_dir):
     while True:
         clear_screen()
-        safe_print(f"{BLUE}======================================={NC}")
         safe_print(f"{BLUE}    {T('menu_config_title')}")
-        safe_print(f"{BLUE}======================================={NC}")
+        safe_print(f"{BLUE}{'-'*60}{NC}")
         safe_print(f"  1) {T('menu_opt_display')}")
         safe_print(f"  2) {T('menu_opt_lang')}")
         safe_print(f"  3) {T('menu_opt_creds')}")
         safe_print(f"  4) {T('menu_opt_post')}")
         safe_print(f"  5) {T('menu_opt_launcher')}")
-        safe_print(f"  6) {T('menu_opt_doh')}")
-        safe_print(f"  7) {T('menu_opt_lan')}")
-        safe_print(f"  8) {T('menu_opt_back')}")
+        safe_print(f"  6) {T('menu_opt_locks')}")
+        safe_print(f"  7) {T('menu_opt_back')}")
         try:
             sel = input("\n> ")
             if not sel: break
@@ -1938,9 +1897,8 @@ def main_menu_screen(config_mgr, script_dir):
             elif sel == "3": configure_credentials_screen(config_mgr)
             elif sel == "4": configure_post_script_screen(config_mgr)
             elif sel == "5": create_desktop_launcher()
-            elif sel == "6": configure_doh_screen(config_mgr)
-            elif sel == "7": configure_lan_screen(config_mgr)
-            elif sel == "8": break    
+            elif sel == "6": configure_locks_screen(config_mgr)
+            elif sel == "7": break    
         except KeyboardInterrupt: break
         
 def run_post_script(config_mgr):
@@ -2013,18 +1971,16 @@ def main():
         sys.exit(1)
 
     clear_screen()
-    safe_print(f"{BLUE}====================================================={NC}")
     safe_print(f"{BLUE}      {T('welcome_title')} (v{VERSION})      {NC}")
-    safe_print(f"{BLUE}====================================================={NC}")
+    safe_print(f"{BLUE}{'-'*60}{NC}")
     safe_print(f"\n{YELLOW}{T('guide_title')}{NC}")
     safe_print(f"\n{GREEN}{T('guide_1')}{NC}")
     safe_print(f"{GREEN}{T('guide_2')}{NC}")
     safe_print(f"{GREEN}{T('guide_3')}{NC}")
     safe_print(f"{GREEN}{T('guide_4')}{NC}")
-
-    safe_print(f"\n{RED}--------------------------------------------------------------------{NC}")
+    safe_print(f"\n{RED}{'-'*60}{NC}")
     safe_print(f"{RED}{T('sudo_simple')}{NC}")
-    safe_print(f"{RED}--------------------------------------------------------------------{NC}\n")
+    safe_print(f"{RED}{'-'*60}{NC}\n")
     if subprocess.run(["sudo", "-v"], capture_output=True).returncode != 0:
         safe_print(f"{RED}{T('sudo_error')}{NC}")
         sys.exit(1)
@@ -2105,10 +2061,16 @@ def main():
             sys.exit(1)
 
         clear_screen()
-        safe_print(f"{BLUE}======================================={NC}")
         safe_print(f"{BLUE}    {T('menu_main_title')}")
-        safe_print(f"{BLUE}======================================={NC}")
-        safe_print(f"\n{T('succ_orig_ip')} {YELLOW}{initial_ip}{NC}\n")
+        safe_print(f"{BLUE}{'-'*60}{NC}")
+        # --- BLOQUE MODIFICADO ---
+        doh_s = config_mgr.get_doh_blocking()
+        lan_s = config_mgr.get_lan_blocking()
+        c_doh = GREEN if doh_s else RED
+        c_lan = GREEN if lan_s else RED
+        
+        safe_print(f"\n{T('succ_orig_ip')} {YELLOW}{initial_ip}{NC}    {T('lbl_locks').rstrip()} {c_doh}DoH{NC} {c_lan}LAN{NC}\n")
+        # -------------------------
         
         last_choice = config_mgr.get_last_choice()
         if last_choice and (last_choice < 1 or last_choice > len(locations)): last_choice = None
@@ -2132,7 +2094,7 @@ def main():
 
             time.sleep(12)
 ############            
-            monitor_connection(selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
+            monitor_connection(config_mgr, selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
         else:
             safe_print(f"\n{YELLOW}Menu 5s...{NC}")
             time.sleep(5)
