@@ -9,11 +9,12 @@ import json
 import getpass
 import itertools
 import errno
+import concurrent.futures
 from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "206"
+VERSION = "207"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -529,6 +530,13 @@ class ConfigManager:
 
     def get_last_choice(self):
         return self.config.get("last_choice")
+
+    def set_last_profile(self, profile_name):
+        self.config["last_profile"] = profile_name
+        self.save_config()
+
+    def get_last_profile(self):
+        return self.config.get("last_profile")
     
     def update_display_config(self, fmt, sep, city_idx, country_idx=None):
         self.config["display_configured"] = True
@@ -983,6 +991,57 @@ def parse_location_name(filename, config):
         return parsed_name[:MAX_LOCATION_NAME_LENGTH - 3] + "..."
     else:
         return parsed_name
+
+# --- FUNCIONES DE ESCANEO Y LATENCIA (NUEVO v207) ---
+
+def get_vpn_host(filepath):
+    """Lee el archivo .ovpn y extrae el primer host de la línea 'remote'."""
+    try:
+        with open(filepath, 'r', errors='ignore') as f:
+            for line in f:
+                parts = line.strip().split()
+                # Busca línea: remote <host> <puerto> <proto>
+                if len(parts) >= 2 and parts[0] == 'remote':
+                    return parts[1] # Retorna el dominio o IP
+    except Exception:
+        pass
+    return None
+
+def measure_latency(file_path, script_dir):
+    """Mide la latencia de un archivo .ovpn específico."""
+    full_path = os.path.join(script_dir, file_path)
+    host = get_vpn_host(full_path)
+    
+    if not host:
+        return file_path, None # No se encontró host
+        
+    try:
+        # Timeout corto (1.5s) para no frenar el proceso si un server está muerto
+        delay = ping3.ping(host, timeout=1.5, unit='ms')
+        return file_path, delay
+    except Exception:
+        return file_path, None
+
+def scan_latencies_parallel(file_list, script_dir):
+    """
+    Ejecuta pings en paralelo a todos los archivos.
+    Retorna un diccionario: {'archivo.ovpn': 45.2, 'otro.ovpn': None}
+    """
+    results = {}
+    # Usamos 20 hilos simultáneos para ir muy rápido
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        # Lanzamos todas las tareas
+        future_to_file = {
+            executor.submit(measure_latency, f, script_dir): f 
+            for f in file_list
+        }
+        
+        # Recogemos resultados conforme llegan
+        for future in concurrent.futures.as_completed(future_to_file):
+            f_name, delay = future.result()
+            results[f_name] = delay
+            
+    return results
 
 def cleanup(is_failure=False, state_override=None):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS
@@ -1621,17 +1680,25 @@ def display_success_banner(location, initial_ip, new_ip, is_reconnecting=False, 
     clear_screen()
     safe_print(f"{GREEN}       {T('succ_title')}")
     safe_print(f"{GREEN}{'-'*45}{NC}")
+    # Ubicación en AMARILLO
     safe_print(f"  {T('lbl_location').strip().ljust(w)} {YELLOW}{location}{NC}")
+    
     if is_reconnecting: safe_print(f"  {T('lbl_reconn').strip().ljust(w)} {YELLOW}{count}{NC}")
-    safe_print(f"  {T('succ_orig_ip').strip().ljust(w)} {YELLOW}{initial_ip}{NC}")
+    
+    # CAMBIO: IP Original en PINK
+    safe_print(f"  {T('succ_orig_ip').strip().ljust(w)} {PINK}{initial_ip}{NC}")
+    
     safe_print(f"  {T('succ_vpn_ip').strip().ljust(w)} {GREEN}{new_ip}{NC}\n")
     safe_print(f"  {BLUE}{T('legend_title')}{NC}")
     safe_print(f"  {GREEN}{T('legend_1')}{NC}")
     safe_print(f"  {YELLOW}{T('legend_2')}{NC}")
     safe_print(f"  {RED}{T('legend_3')}{NC}")
 
-def get_user_choice(locations, last_choice=None):
-    safe_print(f"{BLUE}{T('menu_avail')}{NC}")
+def get_user_choice(locations, last_choice=None, top_stats=None):
+    safe_print(f"\n{BLUE}{T('menu_avail')}{NC}")
+    
+    # (Aquí ya NO imprimimos top_stats)
+
     num_locations = len(locations)
     if num_locations == 0: safe_print(f"{RED}{T('menu_none')}{NC}")
     else:
@@ -1639,9 +1706,12 @@ def get_user_choice(locations, last_choice=None):
         except OSError: terminal_width = 80
         max_digits = len(str(num_locations))
         max_item_width = 0
+        
         for i, location in enumerate(locations):
-            item_length = len(f"  {i + 1:>{max_digits}}) {location}")
-            if item_length > max_item_width: max_item_width = item_length
+            full_str = f"  {i + 1:>{max_digits}}) {location}"
+            clean_str = re.sub(r'\033\[[0-9;]*m', '', full_str)
+            if len(clean_str) > max_item_width: max_item_width = len(clean_str)
+
         column_spacing = 4
         single_col_total_width = max_item_width + column_spacing
         num_columns = terminal_width // single_col_total_width
@@ -1655,19 +1725,32 @@ def get_user_choice(locations, last_choice=None):
                     num = index + 1
                     part = f"  {num:>{max_digits}}) {locations[index]}"
                     if last_choice is not None and num == last_choice: part = f"{YELLOW}{part}{NC}"
-                    if j < num_columns - 1: line_parts.append(f"{part:<{single_col_total_width + (len(YELLOW)+len(NC) if last_choice==num else 0)}}")
-                    else: line_parts.append(part)
+                    
+                    visible_len = len(re.sub(r'\033\[[0-9;]*m', '', part))
+                    padding = single_col_total_width - visible_len
+                    
+                    if j < num_columns - 1: 
+                        line_parts.append(part + " " * padding)
+                    else: 
+                        line_parts.append(part)
             safe_print("".join(line_parts))
 
-    safe_print("")
+    safe_print("") 
     safe_print(f"{RED}{T('ctrl_c_exit')}{NC}")
     
-    prompt = T("menu_prompt", len(locations), YELLOW + locations[last_choice - 1] + NC) if last_choice else T("menu_prompt_no_def", len(locations))
+    # --- CAMBIO: Top 3 movido AQUÍ ABAJO ---
+    if top_stats:
+        safe_print(f"\n{top_stats}")
+    # ---------------------------------------
+    
+    prompt_base = T("menu_prompt", len(locations), YELLOW + locations[last_choice - 1] + NC) if last_choice else T("menu_prompt_no_def", len(locations))
+    prompt = prompt_base.replace(": ", ", 'P' Ping: ")
     
     while True:
         try:
             choice_str = input(prompt)
             if choice_str.lower() == 'm': return 'MENU'
+            if choice_str.lower() == 'p': return 'PING'
             
             if not choice_str and last_choice: return last_choice
             
@@ -2050,12 +2133,32 @@ def main():
         safe_print(f"\n{YELLOW}No se detectaron credenciales guardadas.{NC}")
         configure_credentials_screen(config_mgr)
 
+    # --- VARIABLES DE ESTADO PARA EL MENÚ (v207) ---
+    sorted_files = None      # Lista ordenada por ping (si existe)
+    down_files = set()       # Conjunto de archivos que dieron error (para pintar en gris)
+    top_stats = None         # Texto con el Top 3
+    
     while True:
         create_lock_file()
         try:
-            ovpn_files = sorted([f for f in os.listdir(script_dir) if f.endswith(".ovpn")])
+            # 1. CARGA DE ARCHIVOS
+            # Si ya tenemos una lista ordenada por Ping, la usamos. Si no, carga alfabética normal.
+            if sorted_files:
+                ovpn_files = sorted_files
+            else:
+                ovpn_files = sorted([f for f in os.listdir(script_dir) if f.endswith(".ovpn")])
+            
             if not ovpn_files: raise FileNotFoundError(T("err_no_ovpn"))
-            locations = [parse_location_name(f, config_mgr.config) for f in ovpn_files]
+            
+            # 2. GENERACIÓN DE NOMBRES (Y COLORES)
+            locations = []
+            for f in ovpn_files:
+                name = parse_location_name(f, config_mgr.config)
+                # Si el archivo está en la lista de caídos, lo pintamos de gris oscuro
+                if f in down_files:
+                    name = f"\033[38;5;244m{name}{NC}"
+                locations.append(name)
+                
         except Exception as e:
             safe_print(f"{RED}Error: {e}{NC}")
             sys.exit(1)
@@ -2063,24 +2166,94 @@ def main():
         clear_screen()
         safe_print(f"{BLUE}    {T('menu_main_title')}")
         safe_print(f"{BLUE}{'-'*60}{NC}")
-        # --- BLOQUE MODIFICADO ---
+        
         doh_s = config_mgr.get_doh_blocking()
         lan_s = config_mgr.get_lan_blocking()
         c_doh = GREEN if doh_s else RED
         c_lan = GREEN if lan_s else RED
         
-        safe_print(f"\n{T('succ_orig_ip')} {YELLOW}{initial_ip}{NC}    {T('lbl_locks').rstrip()} {c_doh}DoH{NC} {c_lan}LAN{NC}\n")
-        # -------------------------
+        safe_print(f"{T('succ_orig_ip')} {PINK}{initial_ip}{NC}    {T('lbl_locks').rstrip()} {c_doh}DoH{NC} {c_lan}LAN{NC}")
         
-        last_choice = config_mgr.get_last_choice()
-        if last_choice and (last_choice < 1 or last_choice > len(locations)): last_choice = None
-        choice = get_user_choice(locations, last_choice)
+        # --- LÓGICA INTELIGENTE DE SELECCIÓN ---
+        last_profile = config_mgr.get_last_profile()
+        last_choice = None
+
+        if last_profile and last_profile in ovpn_files:
+            # Si encontramos el archivo, calculamos su posición actual (+1 porque el menú empieza en 1)
+            last_choice = ovpn_files.index(last_profile) + 1
+        else:
+            # Fallback: Si no hay nombre guardado, usamos el número antiguo
+            last_choice = config_mgr.get_last_choice()
+
+        # Validación de seguridad
+        if last_choice and (last_choice < 1 or last_choice > len(locations)): 
+            last_choice = None
+            
+        # Pasamos 'top_stats' al menú
+        choice = get_user_choice(locations, last_choice, top_stats)
+        
         if choice == 'MENU':
             main_menu_screen(config_mgr, script_dir)
             continue
+            
+        # --- BLOQUE DE PING (NUEVO v207) ---
+        if choice == 'PING':
+            safe_print(f"\n{YELLOW}Analizando latencias... (Esto tomará unos segundos){NC}")
+            
+            # 1. Escanear
+            results = scan_latencies_parallel(ovpn_files, script_dir)
+            
+            # 2. Procesar resultados
+            combined = []
+            new_down_files = set()
+            
+            for f in ovpn_files:
+                lat = results.get(f)
+                if lat is None:
+                    sort_val = 9999 # Al final de la lista
+                    new_down_files.add(f)
+                else:
+                    sort_val = lat
+                combined.append((sort_val, f, lat))
+            
+            # 3. Ordenar (Menor latencia primero)
+            combined.sort(key=lambda x: x[0])
+            
+            # 4. Actualizar estado
+            sorted_files = [x[1] for x in combined]
+            down_files = new_down_files
+            
+            # 5. Generar Top 3 (Diseño: Top 3 verde, Nombres blanco/amarillo, Ping verde sin paréntesis)
+            top_list_formatted = []
+            last_profile_chk = config_mgr.get_last_profile() # Para saber cuál pintar de amarillo
 
-        config_mgr.set_last_choice(choice)
+            for item in combined[:3]: # Solo procesamos los 3 primeros
+                if item[2] is not None:
+                    clean_name = parse_location_name(item[1], config_mgr.config)
+                    ping_val = int(item[2])
+
+                    # Color del nombre: Amarillo si es el seleccionado, Blanco (NC) si no
+                    if item[1] == last_profile_chk:
+                        c_name = YELLOW
+                    else:
+                        c_name = NC # Blanco/Default
+
+                    # Formato: Nombre COLOR_PINGms (sin paréntesis)
+                    entry = f"{c_name}{clean_name}{NC} {GREEN}{ping_val}ms{NC}"
+                    top_list_formatted.append(entry)
+            
+            if top_list_formatted:
+                # Etiqueta "Top 3:" en VERDE, sin >> <<
+                top_stats = f"{GREEN}Top 3:{NC} {' | '.join(top_list_formatted)}"
+            else:
+                top_stats = f"{GREEN}Top 3:{NC} {RED}Sin respuesta{NC}"
+            continue
+
         selected_file, selected_location = ovpn_files[choice - 1], locations[choice - 1]
+        
+        # Guardamos TANTO el número (para backup) COMO el nombre (para el futuro ordenamiento)
+        config_mgr.set_last_choice(choice)
+        config_mgr.set_last_profile(selected_file)
 
         new_ip, dns_fallback_used, forwarded_port = establish_connection(selected_file, selected_location, initial_ip)
         
@@ -2088,12 +2261,11 @@ def main():
             safe_print(f"{GREEN}OK. 10s...{NC}")
             time.sleep(10)
             display_success_banner(selected_location, initial_ip, new_ip)
-############          
+            
             run_post_script(config_mgr)
 
-
             time.sleep(12)
-############            
+            
             monitor_connection(config_mgr, selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
         else:
             safe_print(f"\n{YELLOW}Menu 5s...{NC}")
