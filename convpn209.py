@@ -14,7 +14,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "207"
+VERSION = "209"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -43,6 +43,8 @@ DNS_BACKUP_FILE = "convpn_dns_backup.json"
 DNS_LOG_FILE = "convpn_dns.log"
 RECONNECTION_LOG_FILE = "reconnections.log"
 LOCK_FILE = "convpn.lock"
+IPT_V4_BACKUP = "iptables_v4.bak"
+IPT_V6_BACKUP = "iptables_v6.bak"
 
 CONNECTION_TIMEOUT = 20
 MONITOR_INTERVAL = 45
@@ -266,6 +268,9 @@ TRANSLATIONS = {
         "ks_doh": "  > Bloqueando DoH (Anti-Fugas): {}",
         "clean_doh": "  > Eliminando reglas de bloqueo DoH...",
         "ks_lan_block": "  > LAN BLOQUEADA (Modo Paranoia activo).",
+        "ufw_restore": "Restaurando UFW (Firewall del sistema)...",
+        "ipt_backup": "Guardando reglas iptables existentes...",
+        "ipt_restore": "Restaurando reglas iptables originales...",
         "exec_post": "Ejecutando script post-conexión (Usuario: {})..."
     },
     "en": {
@@ -456,6 +461,9 @@ TRANSLATIONS = {
         "ks_doh": "  > Blocking DoH (Anti-Leak): {}",
         "clean_doh": "  > Removing DoH rules...",
         "ks_lan_block": "  > LAN BLOCKED (Paranoia Mode active).",
+        "ufw_restore": "Restoring UFW (System Firewall)...",
+        "ipt_backup": "Backing up existing iptables rules...",
+        "ipt_restore": "Restoring original iptables rules...",
         "exec_post": "Executing post-connection script (User: {})..."
     }
 }
@@ -711,18 +719,31 @@ def extract_connection_details(script_dir):
 #######
   
 def manage_kill_switch(phys_iface, tun_iface, action="add", vpn_ip=None, vpn_port=None, proto="udp", script_dir=None, restore_ufw=False, block_doh=False, block_lan=False):
-    if not phys_iface: return
+    if not phys_iface and action != "del": return
     ipt, ip6t = ["sudo", "iptables"], ["sudo", "ip6tables"]
     
     if action == "add":
-        # 1. Gestión de UFW (Evitar conflictos)
+        # 1. Gestión de UFW o Backup de IPTables
         if is_ufw_active():
             safe_print(f"{YELLOW}UFW activo detectado. Desactivando temporalmente para Kill Switch...{NC}")
             subprocess.run(["sudo", "ufw", "disable"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if script_dir: update_lock_state("ufw_was_active", True)
+        else:
+            # Si UFW no está activo, guardamos las reglas raw de iptables por si el usuario tenía configuración propia
+            safe_print(f"{BLUE}{T('ipt_backup')}{NC}")
+            try:
+                # Es vital usar script_dir para no dejar basura por el sistema
+                if script_dir:
+                    with open(os.path.join(script_dir, IPT_V4_BACKUP), "w") as f:
+                        subprocess.run(["sudo", "iptables-save"], stdout=f, check=False)
+                    with open(os.path.join(script_dir, IPT_V6_BACKUP), "w") as f:
+                        subprocess.run(["sudo", "ip6tables-save"], stdout=f, check=False)
+                    update_lock_state("iptables_backed_up", True)
+            except Exception: pass
 
         safe_print(f"{YELLOW}{T('ks_active')}{NC}")
         local_subnet = get_local_subnet(phys_iface)
+        
         
         # 2. Limpieza y Políticas DROP
         for cmd in [ipt, ip6t]:
@@ -1057,13 +1078,37 @@ def cleanup(is_failure=False, state_override=None):
     fw_iface = actions.get("firewall_iface")
     ufw_was_active = actions.get("ufw_was_active", False)
     doh_was_blocked = actions.get("doh_blocked", False)
+    iptables_backed_up = actions.get("iptables_backed_up", False)
 
     # Creamos un conjunto con las interfaces (elimina duplicados y nulos automáticamente)
     cached_iface = get_cached_physical_interface(script_dir)
     interfaces_to_clean = {fw_iface, cached_iface} - {None}
     
-    for iface in interfaces_to_clean:
-        manage_kill_switch(iface, None, action="del", restore_ufw=ufw_was_active)
+    # Comprobamos si realmente activamos el bloqueo antes de intentar limpiar nada
+    was_ks_active = actions.get("kill_switch_active", False)
+
+    if was_ks_active or ufw_was_active:
+        # Si hay que limpiar (KS activo) pero no hay interfaces detectadas, forzamos None para limpieza global
+        if not interfaces_to_clean: interfaces_to_clean.add(None)
+        
+        # 1. Limpiamos reglas (IPTABLES FLUSH) sin tocar UFW todavía
+        for iface in interfaces_to_clean:
+            manage_kill_switch(iface, None, action="del", restore_ufw=False)
+
+        # 2. Restauramos UFW una sola vez al final (si corresponde)
+        if ufw_was_active:
+            safe_print(f"{BLUE}{T('ufw_restore')}{NC}")
+            subprocess.run(["sudo", "ufw", "--force", "enable"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif iptables_backed_up:
+            safe_print(f"{BLUE}{T('ipt_restore')}{NC}")
+            try:
+                v4_path = os.path.join(script_dir, IPT_V4_BACKUP)
+                v6_path = os.path.join(script_dir, IPT_V6_BACKUP)
+                if os.path.exists(v4_path):
+                    with open(v4_path, "r") as f: subprocess.run(["sudo", "iptables-restore"], stdin=f, check=False)
+                if os.path.exists(v6_path):
+                    with open(v6_path, "r") as f: subprocess.run(["sudo", "ip6tables-restore"], stdin=f, check=False)
+            except Exception: pass
             
     # 3. DNS & NETWORK
     if actions.get("resolv_locked"):
@@ -1121,7 +1166,7 @@ def cleanup(is_failure=False, state_override=None):
 
     # 5. ARCHIVOS
     safe_print(f"{BLUE}{T('clean_files')}{NC}")
-    for f in [LOG_FILE, PORT_FILE, RECONNECTION_LOG_FILE, DNS_LOG_FILE, DNS_BACKUP_FILE, LOCK_FILE]:
+    for f in [LOG_FILE, PORT_FILE, RECONNECTION_LOG_FILE, DNS_LOG_FILE, DNS_BACKUP_FILE, LOCK_FILE, IPT_V4_BACKUP, IPT_V6_BACKUP]:
         p = os.path.join(script_dir, f)
         if os.path.exists(p): 
             try: os.remove(p)
