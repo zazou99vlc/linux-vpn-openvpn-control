@@ -14,7 +14,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "209"
+VERSION = "210"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -1704,7 +1704,7 @@ def monitor_connection(config_mgr, selected_file, selected_location, initial_ip,
                 time.sleep(4)
                 continue
             
-            safe_print(f"{YELLOW}{T('ctrl_c_exit')}{NC}", dynamic=True)
+            safe_print(f"{RED}{T('ctrl_c_exit')}{NC}", dynamic=True)
             time.sleep(MONITOR_INTERVAL)
     except KeyboardInterrupt:
         safe_print(f"\n{YELLOW}Stop signal.{NC}")
@@ -2121,16 +2121,17 @@ def main():
     initial_ip = None
     
     conn_success = False
-    for i in range(2):
+    providers = ["ifconfig.me", "icanhazip.com", "ipinfo.io/ip"]
+    for provider in providers:
         try:
-            res = subprocess.run(["curl", "-s", "--max-time", str(CURL_TIMEOUT), "ifconfig.me"], capture_output=True, text=True, check=True)
+            res = subprocess.run(["curl", "-4", "-s", "--max-time", str(CURL_TIMEOUT), provider], capture_output=True, text=True, check=True)
             if is_valid_ip(res.stdout.strip()):
                 initial_ip = res.stdout.strip()
                 conn_success = True
                 safe_print(f"{GREEN}{T('conn_confirmed')}{NC}")
                 break
         except Exception:
-            if i == 0: time.sleep(5)
+            continue
 
     if not conn_success:
         safe_print(f"{YELLOW}{T('repair_attempt')}{NC}")
@@ -2151,7 +2152,7 @@ def main():
                 if len(parts) > 1 and parts[1].lower() != 'lo' and not parts[1].lower().startswith('tun'):
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv4.never-default", "no"], check=True, capture_output=True)
                     subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv4.ignore-auto-routes", "no"], check=True, capture_output=True)
-                    subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv6.method", "auto"], check=True, capture_output=True)
+                    subprocess.run(["sudo", "nmcli", "connection", "modify", parts[0], "ipv6.method", "disabled"], check=True, capture_output=True)
             
             safe_print(T('repair_reset'))
             subprocess.run(["sudo", "nmcli", "networking", "off"], check=True, capture_output=True)
@@ -2303,13 +2304,13 @@ def main():
         new_ip, dns_fallback_used, forwarded_port = establish_connection(selected_file, selected_location, initial_ip)
         
         if new_ip:
-            safe_print(f"{GREEN}OK. 10s...{NC}")
-            time.sleep(10)
+            safe_print(f"{GREEN}OK. 7s...{NC}")
+            time.sleep(7)
             display_success_banner(selected_location, initial_ip, new_ip)
             
             run_post_script(config_mgr)
 
-            time.sleep(12)
+            time.sleep(5)
             
             monitor_connection(config_mgr, selected_file, selected_location, initial_ip, new_ip, dns_fallback_used, forwarded_port)
         else:
