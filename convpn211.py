@@ -14,7 +14,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "210"
+VERSION = "211"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -1067,6 +1067,8 @@ def scan_latencies_parallel(file_list, script_dir):
 def cleanup(is_failure=False, state_override=None):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS
     
+    subprocess.run(["sudo", "chattr", "-i", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
+    
     safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
     subprocess.run(["sudo", "killall", "-q", "openvpn"], check=False, stderr=subprocess.DEVNULL) # <--- MATA EL PROCESO ZOMBIE
     script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -2087,7 +2089,7 @@ def main():
         except (json.JSONDecodeError, ValueError):
             pass
 
-    create_lock_file()
+#    create_lock_file()
 
     config_mgr = ConfigManager(script_dir)
     saved_lang = config_mgr.get_language()
@@ -2112,6 +2114,8 @@ def main():
     if subprocess.run(["sudo", "-v"], capture_output=True).returncode != 0:
         safe_print(f"{RED}{T('sudo_error')}{NC}")
         sys.exit(1)
+        
+    create_lock_file()    
     
     threading.Thread(target=keep_sudo_alive, daemon=True).start()
 
