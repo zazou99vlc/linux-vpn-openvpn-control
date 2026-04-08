@@ -14,7 +14,7 @@ from shutil import which
 from datetime import datetime
 
 # --- VERSIÓN DEL SCRIPT ---
-VERSION = "211"
+VERSION = "212"
 
 # --- GESTIÓN DE ERRORES DE IMPORTACIÓN (BILINGÜE) ---
 try:
@@ -611,12 +611,20 @@ def get_lock_state():
         except Exception:
             pass
     return None
-
 def create_lock_file():
     script_dir = os.path.dirname(os.path.realpath(__file__))
     lock_path = os.path.join(script_dir, LOCK_FILE)
+    
+    process_name = None
+    try:
+        with open("/proc/self/cmdline", "r") as f:
+            process_name = f.read().replace('\x00', ' ').strip()
+    except Exception:
+        pass
+        
     initial_state = {
         "pid": os.getpid(),
+        "process_name": process_name,
         "actions": {}
     }
     try:
@@ -1067,7 +1075,10 @@ def scan_latencies_parallel(file_list, script_dir):
 def cleanup(is_failure=False, state_override=None):
     global ORIGINAL_DEFAULT_ROUTE_DETAILS
     
+    # Desbloqueo y restauración de emergencia hardcoded
     subprocess.run(["sudo", "chattr", "-i", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
+    if os.path.exists("/etc/resolv.conf.bak"):
+        subprocess.run(["sudo", "mv", "/etc/resolv.conf.bak", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
     
     safe_print(f"\n{YELLOW}{T('clean_start')}{NC}")
     subprocess.run(["sudo", "killall", "-q", "openvpn"], check=False, stderr=subprocess.DEVNULL) # <--- MATA EL PROCESO ZOMBIE
@@ -2072,6 +2083,17 @@ def main():
                 try:
                     os.kill(old_pid, 0)
                     is_alive = True
+                    
+                    # Verificación extra: ¿El PID pertenece a nuestro script?
+                    saved_name = lock_data.get("process_name")
+                    if saved_name:
+                        try:
+                            with open(f"/proc/{old_pid}/cmdline", "r") as f:
+                                current_name = f.read().replace('\x00', ' ').strip()
+                            if current_name != saved_name:
+                                is_alive = False  # Falso positivo: el PID fue reciclado
+                        except Exception:
+                            pass
                 except OSError as e:
                     if e.errno == errno.EPERM: is_alive = True
                     elif e.errno == errno.ESRCH: is_alive = False
@@ -2147,6 +2169,9 @@ def main():
                 subprocess.run(["sudo", "resolvectl", "revert", iface], check=False, stderr=subprocess.DEVNULL)
         try:
             safe_print(T('repair_restoring'))
+            subprocess.run(["sudo", "chattr", "-i", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
+            if os.path.exists("/etc/resolv.conf.bak"):
+                subprocess.run(["sudo", "mv", "/etc/resolv.conf.bak", "/etc/resolv.conf"], check=False, stderr=subprocess.DEVNULL)
             if is_systemd_resolved_active():
                  subprocess.run(["sudo", "resolvectl", "flush-caches"], check=False, stderr=subprocess.DEVNULL)
             
